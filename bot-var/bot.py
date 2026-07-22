@@ -1,59 +1,51 @@
 import os
 import time
 import requests
+from datetime import datetime
 
-# Puxa o TOKEN e o CHAT_ID direto das variáveis de ambiente do Render
-TOKEN = os.getenv("TOKEN", "8896171524:AAHOeemjzfzILlzw5yoi5hsz8P5ThCroBek")
-CHAT_ID = os.getenv("CHAT_ID", "675279616")
+# Configurações do Telegram pegando das variáveis de ambiente do Render
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def enviar_telegram(mensagem):
+def enviar_mensagem(texto):
+    """Função para disparar alertas no Telegram"""
+    if not TOKEN or not CHAT_ID:
+        print("Erro: TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não configurados.")
+        return
+    
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": mensagem,
+        "text": texto,
         "parse_mode": "Markdown"
     }
     try:
         response = requests.post(url, json=payload)
-        return response.json()
+        if response.status_code == 200:
+            print("Mensagem enviada com sucesso!")
+        else:
+            print(f"Erro ao enviar mensagem: {response.text}")
     except Exception as e:
-        print(f"Erro ao conectar com o Telegram: {e}")
+        print(f"Erro na requisição: {e}")
 
-def analisar_partidas():
-    print("🔄 Verificando partidas e lances de VAR...")
+def monitorar_partidas():
+    """Função principal de monitoramento"""
+    hora_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
     
-    # Exemplo simulado de dados vindos de uma partida ao vivo
-    partidas_ao_vivo = [
-        {
-            "teams": "Time A x Time B",
-            "minute": 82,
-            "events": [
-                {"type": "var", "description": "VAR Check: Possible Penalty"}
-            ]
-        }
-    ]
-
-    for jogo in partidas_ao_vivo:
-        for evento in jogo.get("events", []):
-            tipo = evento.get("type", "").lower()
-            descricao = evento.get("description", "").lower()
-            
-            # Se identificar checagem ou intervenção de VAR
-            if "var" in tipo or "check" in descricao:
-                alerta = (
-                    f"🚨 *ALERTA DE VAR DETECTADO!* 📺\n\n"
-                    f"⚽ *Jogo:* {jogo['teams']}\n"
-                    f"⏱ *Minuto:* {jogo['minute']}'\n"
-                    f"🔍 *Detalhe:* {evento['description']}\n\n"
-                    f"⚠️ *Fique de olho:* Alta tendência de acréscimo prolongado!"
-                )
-                enviar_telegram(alerta)
+    # Mensagem de teste/status inicial
+    mensagem = (
+        f"🤖 *Bot de VAR / Análise Ativo!*\n"
+        f"⏱️ Horário da verificação: {hora_atual}\n"
+        f"🟢 Sistema rodando e conectado com sucesso."
+    )
+    enviar_mensagem(mensagem)
 
 if __name__ == "__main__":
-    print("🤖 Robô de Alertas de VAR iniciado com sucesso!")
-    enviar_telegram("🤖 *Robô de Alertas de VAR online e monitorando!*")
+    print("Bot iniciado...")
+    # Executa o monitoramento inicial ao ligar
+    monitorar_partidas()
     
+    # Loop para manter o robô rodando (exemplo checando a cada 5 minutos)
     while True:
-        analisar_partidas()
-        # Aguarda 60 segundos antes de fazer uma nova varredura
-        time.sleep(60)
+        # Aqui depois vamos encaixar a chamada para a API (Packball / FootyStats)
+        time.sleep(300) # 300 segundos = 5 minutos
