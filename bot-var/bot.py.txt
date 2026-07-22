@@ -1,0 +1,59 @@
+import os
+import time
+import requests
+
+# Puxa o TOKEN e o CHAT_ID direto das variáveis de ambiente do Render
+TOKEN = os.getenv("TOKEN", "8896171524:AAHOeemjzfzILlzw5yoi5hsz8P5ThCroBek")
+CHAT_ID = os.getenv("CHAT_ID", "675279616")
+
+def enviar_telegram(mensagem):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": mensagem,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        return response.json()
+    except Exception as e:
+        print(f"Erro ao conectar com o Telegram: {e}")
+
+def analisar_partidas():
+    print("🔄 Verificando partidas e lances de VAR...")
+    
+    # Exemplo simulado de dados vindos de uma partida ao vivo
+    partidas_ao_vivo = [
+        {
+            "teams": "Time A x Time B",
+            "minute": 82,
+            "events": [
+                {"type": "var", "description": "VAR Check: Possible Penalty"}
+            ]
+        }
+    ]
+
+    for jogo in partidas_ao_vivo:
+        for evento in jogo.get("events", []):
+            tipo = evento.get("type", "").lower()
+            descricao = evento.get("description", "").lower()
+            
+            # Se identificar checagem ou intervenção de VAR
+            if "var" in tipo or "check" in descricao:
+                alerta = (
+                    f"🚨 *ALERTA DE VAR DETECTADO!* 📺\n\n"
+                    f"⚽ *Jogo:* {jogo['teams']}\n"
+                    f"⏱ *Minuto:* {jogo['minute']}'\n"
+                    f"🔍 *Detalhe:* {evento['description']}\n\n"
+                    f"⚠️ *Fique de olho:* Alta tendência de acréscimo prolongado!"
+                )
+                enviar_telegram(alerta)
+
+if __name__ == "__main__":
+    print("🤖 Robô de Alertas de VAR iniciado com sucesso!")
+    enviar_telegram("🤖 *Robô de Alertas de VAR online e monitorando!*")
+    
+    while True:
+        analisar_partidas()
+        # Aguarda 60 segundos antes de fazer uma nova varredura
+        time.sleep(60)
