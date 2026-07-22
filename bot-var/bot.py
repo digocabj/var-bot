@@ -1,9 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime
 
-# Configurações do Telegram e da API-Football
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
@@ -23,37 +21,63 @@ def enviar_mensagem(texto):
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
 
-def buscar_jogos_ao_vivo():
-    """Consulta partidas ao vivo na API-Football"""
+def buscar_eventos_partida(fixture_id):
+    """Busca os eventos detalhados de uma partida (para rastrear VAR, cartões, etc.)"""
+    url = f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    
+    try:
+        resposta = requests.get(url, headers=headers, timeout=10)
+        if resposta.status_code == 200:
+            return resposta.json().get("response", [])
+    except Exception as e:
+        print(f"Erro ao buscar eventos do jogo {fixture_id}: {e}")
+    return []
+
+def monitorar_jogos():
+    """Varre jogos ao vivo e analisa interrupções e paralisações"""
     if not API_FOOTBALL_KEY:
         print("Erro: API_FOOTBALL_KEY não configurada.")
         return
 
     url = "https://v3.football.api-sports.io/fixtures?live=all"
-    headers = {
-        "x-apisports-key": API_FOOTBALL_KEY
-    }
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
     
     try:
         resposta = requests.get(url, headers=headers, timeout=15)
         if resposta.status_code == 200:
             dados = resposta.json().get("response", [])
-            print(f"Partidas ao vivo encontradas: {len(dados)}")
+            print(f"Analisando {len(dados)} partidas ao vivo...")
             
-            # Exemplo de varredura nas partidas ativas
             for item in dados:
-                liga = item.get("league", {}).get("name", "Liga Desconhecida")
+                fixture_id = item.get("fixture", {}).get("id")
+                liga = item.get("league", {}).get("name", "Liga")
                 casa = item.get("teams", {}).get("home", {}).get("name", "Casa")
                 fora = item.get("teams", {}).get("away", {}).get("name", "Fora")
                 minuto = item.get("fixture", {}).get("status", {}).get("elapsed", 0)
-                gols_casa = item.get("goals", {}).get("home", 0)
-                gols_fora = item.get("goals", {}).get("away", 0)
                 
-                # Exemplo de filtro ou log no console do Render
-                print(f"[{liga}] {casa} {gols_casa} x {gols_fora} {fora} (Minuto: {minuto}')")
-                
-                # Aqui no futuro encaixaremos a sua regra de escanteios HT ou pressão!
-                
+                # Exemplo: focar na reta final do primeiro tempo (35' a 45') ou do segundo tempo
+                if minuto >= 35:
+                    eventos = buscar_eventos_partida(fixture_id)
+                    
+                    # Contabiliza quantas interrupções/eventos relevantes ocorreram
+                    contador_var = sum(1 for ev in eventos if "var" in ev.get("detail", "").lower())
+                    contador_cartoes = sum(1 for ev in eventos if ev.get("type") == "Card")
+                    
+                    # Se houver movimentação intensa (ex: VAR acionado ou muitos cartões/paralisações)
+                    if contador_var > 0 or contador_cartoes >= 2:
+                        mensagem = (
+                            f"🚨 *ALERTA DE JOGO PARADO!* 🚨\n\n"
+                            f"🏆 *Liga:* {liga}\n"
+                            f"⚽ *Confronto:* {casa} x {fora}\n"
+                            f"⏱ *Minuto:* {minuto}'\n"
+                            f"📺 *Eventos VAR:* {contador_var}\n"
+                            f" *Cartões/Paralisações:* {contador_cartoes}\n\n"
+                            f"_Cenário ideal para olho em acréscimos e pressão final!_"
+                        )
+                        enviar_mensagem(mensagem)
+                        print(f"Alerta enviado para: {casa} vs {fora}")
+                        
         else:
             print(f"Erro na API: Status {resposta.status_code}")
             
@@ -61,10 +85,10 @@ def buscar_jogos_ao_vivo():
         print(f"Erro na requisição: {e}")
 
 if __name__ == "__main__":
-    print("Bot de monitoramento via API-Football iniciado...")
-    enviar_mensagem("🤖 *Robô conectado à API-Football iniciado com sucesso!* 🚀")
+    print("Bot de interrupções e VAR iniciado...")
+    enviar_mensagem("🤖 *Robô de monitoramento de interrupções (VAR/Paralisações) ativado!* ⚽")
     
     while True:
-        buscar_jogos_ao_vivo()
-        # Aguarda 3 minutos antes da próxima varredura para poupar cotas do plano gratuito
+        monitorar_jogos()
+        # Aguarda 3 minutos entre as varreduras
         time.sleep(180)
