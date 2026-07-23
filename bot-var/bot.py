@@ -7,8 +7,6 @@ from telegram import Bot
 TELEGRAM_BOT_TOKEN = "889617524:AAHOeemjzfzILLzw5oi5hsP5ThCroBek"
 TELEGRAM_CHAT_ID = "675279616"
 API_FOOTBALL_KEY = "80ad3bfb17e12e4244133f4d13b13cea"
-# Sua chave oficial da API-Sports que usamos nos testes anteriores:
-API_FOOTBALL_KEY = "80ad3bfb17e12e4244133f4d13b13cea"
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
