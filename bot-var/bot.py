@@ -4,7 +4,7 @@ import pandas as pd
 from telegram import Bot
 
 # --- CONFIGURAÇÕES ---
-TELEGRAM_BOT_TOKEN = "
+TELEGRAM_BOT_TOKEN = "889617524:AAHOeemjzfzILLzw5oi5hsP5ThCroBek"
 8896171524:AAHOeemjzfzILlzw5yoi5hsz8P5ThCroBek"
 TELEGRAM_CHAT_ID = "675279616"
 # Sua chave oficial da API-Sports que usamos nos testes anteriores:
