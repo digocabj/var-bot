@@ -4,7 +4,6 @@ import requests
 import pandas as pd
 from telegram import Bot
 
-# --- CONFIGURAÇÕES ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
@@ -46,7 +45,7 @@ def buscar_eventos_partida(fixture_id):
 def buscar_odds_melhores(fixture_id):
     url = "https://v3.football.api-sports.io/odds"
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    bookmakers_alvo = [8, 34] # 8: Pinnacle, 34: Betano
+    bookmakers_alvo = [8, 34]
     
     melhores_odds = {
         "hc_05": {"odd": 0.0, "casa": "-"},
@@ -59,7 +58,6 @@ def buscar_odds_melhores(fixture_id):
         for book_id in bookmakers_alvo:
             nome_casa = "Pinnacle" if book_id == 8 else "Betano"
             response = requests.get(url, headers=headers, params={"fixture": fixture_id, "bookmaker": book_id}, timeout=8)
-            data = response.json().get("response", [])
             
             odds_pins = {"hc_05": 1.85, "hc_10": 2.10, "hc_15": 2.65, "mais_cantos": 1.95}
             odds_beta = {"hc_05": 1.80, "hc_10": 2.15, "hc_15": 2.55, "mais_cantos": 1.90}
@@ -106,7 +104,6 @@ def rodar_varredura():
                     away_goals = match['goals']['away'] or 0
                     
                     if home_goals <= away_goals:
-                        
                         eventos = buscar_eventos_partida(fixture_id)
                         tem_expulsao_casa = False
                         for ev in eventos:
