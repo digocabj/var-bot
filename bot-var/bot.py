@@ -2,16 +2,25 @@ import os
 import time
 import requests
 import pandas as pd
-from telegram import Bot
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-
 alertas_enviados = set()
 historico_partidas = {}
+
+def enviar_telegram(mensagem):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": mensagem,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Erro ao enviar mensagem no Telegram: {e}")
 
 def carregar_ids_excel():
     try:
@@ -185,7 +194,7 @@ def rodar_varredura():
                                         f"💡 *Filtros estritos aplicados com sucesso!*"
                                     )
                                     
-                                    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensagem, parse_mode="Markdown")
+                                    enviar_telegram(mensagem)
                                     alertas_enviados.add(alerta_key)
                                     print(f"✅ Alerta enviado: {home_name} vs {away_name}")
         except Exception as match_err:
@@ -194,15 +203,8 @@ def rodar_varredura():
 
 if __name__ == "__main__":
     print("🤖 Robô institucional ligado e varrendo a API-Football...")
-    try:
-        bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID, 
-            text="🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse >= 60%, Finalizações >= 50%, Sem Vermelho e >= 5 Ataques Perigosos recentes.", 
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"⚠️ Aviso ao enviar mensagem inicial: {e}")
-        
+    enviar_telegram("🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse >= 60%, Finalizações >= 50%, Sem Vermelho e >= 5 Ataques Perigosos recentes.")
+    
     while True:
         try:
             rodar_varredura()
