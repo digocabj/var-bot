@@ -193,12 +193,14 @@ def rodar_varredura():
                                     print(f"✅ Alerta enviado: {home_name} vs {away_name}")
         except Exception as match_err:
             print(f"⚠️ Erro ao processar partida individual: {match_err}")
-            continue
-
-if __name__ == "__main__":
+         if __name__ == "__main__":
     print("🤖 Robô institucional ligado e varrendo a API-Football...")
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse $\ge 60\%$, Finalizações $\ge 50\%$, Sem Vermelho e $\ge 5$ Ataques Perigosos recentes.", parse_mode="Markdown")
+        bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID, 
+            text="🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse >= 60%, Finalizações >= 50%, Sem Vermelho e >= 5 Ataques Perigosos recentes.", 
+            parse_mode="Markdown"
+        )
     except Exception as e:
         print(f"⚠️ Aviso ao enviar mensagem inicial: {e}")
         
