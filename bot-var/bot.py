@@ -1,94 +1,124 @@
-import os
 import time
 import requests
+import pandas as pd
+from telegram import Bot
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
+# --- CONFIGURAÇÕES ---
+TELEGRAM_BOT_TOKEN = "COLOQUE_SEU_TOKEN_AQUI"
+TELEGRAM_CHAT_ID = "COLOQUE_SEU_CHAT_ID_AQUI"
+# Sua chave oficial da API-Sports que usamos nos testes anteriores:
+API_FOOTBALL_KEY = "80ad3bfb17e12e4244133f4d13b13cea"
 
-def enviar_mensagem(texto):
-    """Envia alertas formatados para o Telegram"""
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": texto,
-        "parse_mode": "Markdown"
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+# Dicionário para controlar para não mandar alerta repetido do mesmo jogo
+alertas_enviados = set()
+
+def carregar_ids_excel():
+    # Lê a sua planilha (certifique-se que a coluna com os IDs chama 'api_football_id')
+    df = pd.read_excel("sua_lista_de_times.xlsx")
+    return df['api_football_id'].dropna().astype(int).tolist()
+
+def buscar_estatisticas_detalhadas(fixture_id):
+    url = "https://v3.football.api-sports.io/fixtures/statistics"
+    headers = {
+        "x-apisports-key": API_FOOTBALL_KEY
     }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Erro ao enviar mensagem: {e}")
+    response = requests.get(url, headers=headers, params={"fixture": fixture_id})
+    return response.json().get('response', [])
 
-def buscar_eventos_partida(fixture_id):
-    """Busca os eventos detalhados de uma partida (para rastrear VAR, cartões, etc.)"""
-    url = f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}"
-    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+def rodar_varredura():
+    print("🔄 Varredura iniciada...")
+    ids_monitorados = carregar_ids_excel()
     
-    try:
-        resposta = requests.get(url, headers=headers, timeout=10)
-        if resposta.status_code == 200:
-            return resposta.json().get("response", [])
-    except Exception as e:
-        print(f"Erro ao buscar eventos do jogo {fixture_id}: {e}")
-    return []
-
-def monitorar_jogos():
-    """Varre jogos ao vivo e analisa interrupções e paralisações"""
-    if not API_FOOTBALL_KEY:
-        print("Erro: API_FOOTBALL_KEY não configurada.")
-        return
-
-    url = "https://v3.football.api-sports.io/fixtures?live=all"
-    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {
+        "x-apisports-key": API_FOOTBALL_KEY
+    }
     
-    try:
-        resposta = requests.get(url, headers=headers, timeout=15)
-        if resposta.status_code == 200:
-            dados = resposta.json().get("response", [])
-            print(f"Analisando {len(dados)} partidas ao vivo...")
+    # Puxa todos os jogos ao vivo do dia na API oficial
+    response = requests.get(url, headers=headers, params={"live": "all"})
+    dados = response.json()
+    
+    for match in dados.get('response', []):
+        fixture_id = match['fixture']['id']
+        home_id = match['teams']['home']['id']
+        
+        # 1. O time da casa está na sua lista?
+        if home_id in ids_monitorados:
+            elapsed = match['fixture']['status']['elapsed']
             
-            for item in dados:
-                fixture_id = item.get("fixture", {}).get("id")
-                liga = item.get("league", {}).get("name", "Liga")
-                casa = item.get("teams", {}).get("home", {}).get("name", "Casa")
-                fora = item.get("teams", {}).get("away", {}).get("name", "Fora")
-                minuto = item.get("fixture", {}).get("status", {}).get("elapsed", 0)
+            # 2. Está entre o minuto 1 e 35 do 1º tempo?
+            if elapsed is not None and 1 <= elapsed <= 35:
+                home_goals = match['goals']['home'] or 0
+                away_goals = match['goals']['away'] or 0
                 
-                # Exemplo: focar na reta final do primeiro tempo (35' a 45') ou do segundo tempo
-                if minuto >= 35:
-                    eventos = buscar_eventos_partida(fixture_id)
+                # 3. O mandante está empatando ou perdendo?
+                if home_goals <= away_goals:
                     
-                    # Contabiliza quantas interrupções/eventos relevantes ocorreram
-                    contador_var = sum(1 for ev in eventos if "var" in ev.get("detail", "").lower())
-                    contador_cartoes = sum(1 for ev in eventos if ev.get("type") == "Card")
-                    
-                    # Se houver movimentação intensa (ex: VAR acionado ou muitos cartões/paralisações)
-                    if contador_var > 0 or contador_cartoes >= 2:
-                        mensagem = (
-                            f"🚨 *ALERTA DE JOGO PARADO!* 🚨\n\n"
-                            f"🏆 *Liga:* {liga}\n"
-                            f"⚽ *Confronto:* {casa} x {fora}\n"
-                            f"⏱ *Minuto:* {minuto}'\n"
-                            f"📺 *Eventos VAR:* {contador_var}\n"
-                            f" *Cartões/Paralisações:* {contador_cartoes}\n\n"
-                            f"_Cenário ideal para olho em acréscimos e pressão final!_"
-                        )
-                        enviar_mensagem(mensagem)
-                        print(f"Alerta enviado para: {casa} vs {fora}")
+                    # Puxa as estatísticas para validar a posse de bola (> 60%) e inputs adicionais
+                    stats = buscar_estatisticas_detalhadas(fixture_id)
+                    if stats and len(stats) >= 2:
+                        # Identifica de forma segura qual bloco pertence ao mandante
+                        home_stats = None
+                        for team_stat in stats:
+                            if team_stat['team']['id'] == home_id:
+                                home_stats = team_stat['statistics']
+                                break
                         
-        else:
-            print(f"Erro na API: Status {resposta.status_code}")
-            
-    except Exception as e:
-        print(f"Erro na requisição: {e}")
+                        if not home_stats:
+                            continue
+
+                        possession = 0
+                        corners = 0
+                        shots_on_goal = 0
+                        total_shots = 0
+
+                        for stat in home_stats:
+                            stype = stat['type']
+                            val = stat['value']
+                            
+                            if stype == 'Ball Possession' and val:
+                                possession = int(str(val).replace('%', ''))
+                            elif stype == 'Corner Kicks' and val is not None:
+                                corners = int(val)
+                            elif stype == 'Shots on Goal' and val is not None:
+                                shots_on_goal = int(val)
+                            elif stype == 'Total Shots' and val is not None:
+                                total_shots = int(val)
+                    
+                        if possession >= 60:
+                            # Chave única para evitar spam do mesmo jogo no mesmo minuto/condição
+                            alerta_key = f"{fixture_id}_{elapsed}"
+                            if alerta_key not in alertas_enviados:
+                                home_name = match['teams']['home']['name']
+                                away_name = match['teams']['away']['name']
+                                league_name = match['league']['name']
+                                
+                                mensagem = (
+                                    f"🚨 **ALERTA DE PRESSÃO HT** 🚨\n\n"
+                                    f"🏆 **Liga:** {league_name}\n"
+                                    f"🏠 **{home_name}** vs {away_name}\n"
+                                    f"⏱ Minuto: **{elapsed}'**\n"
+                                    f"⚽ Placar: **{home_goals} - {away_goals}**\n\n"
+                                    f"📊 **Estatísticas do Mandante:**\n"
+                                    f"• Posse de Bola: **{possession}%**\n"
+                                    f"• Escanteios: **{corners}**\n"
+                                    f"• Chutes a Gol: **{shots_on_goal}**\n"
+                                    f"• Finalizações Totais: **{total_shots}**\n\n"
+                                    f"🔥 *Condições batidas! Hora de olhar o mercado de cantos.*"
+                                )
+                                
+                                bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensagem, parse_mode="Markdown")
+                                alertas_enviados.add(alerta_key)
 
 if __name__ == "__main__":
-    print("Bot de interrupções e VAR iniciado...")
-    enviar_mensagem("🤖 *Robô de monitoramento de interrupções (VAR/Paralisações) ativado!* ⚽")
-    
+    print("🤖 Robô do Telegram ligado e monitorando via API oficial...")
     while True:
-        monitorar_jogos()
-        # Aguarda 3 minutos entre as varreduras
-        time.sleep(180)
+        try:
+            rodar_varredura()
+        except Exception as e:
+            print(f"Erro na varredura: {e}")
+        
+        # Aguarda 60 segundos para a próxima checagem
+        time.sleep(60)
