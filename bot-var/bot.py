@@ -193,7 +193,9 @@ def rodar_varredura():
                                     print(f"✅ Alerta enviado: {home_name} vs {away_name}")
         except Exception as match_err:
             print(f"⚠️ Erro ao processar partida individual: {match_err}")
-         if __name__ == "__main__":
+            continue
+
+if __name__ == "__main__":
     print("🤖 Robô institucional ligado e varrendo a API-Football...")
     try:
         bot.send_message(
