@@ -1,7 +1,7 @@
 import requests
 
 # Suas credenciais atuais
-TELEGRAM_BOT_TOKEN = "889617524:AAHOeemjzfZILLzw5oi5hsP5ThCroBek"
+TELEGRAM_BOT_TOKEN = "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI"
 TELEGRAM_CHAT_ID = "675279616"
 
 # Mensagem de teste direta
