@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import pandas as pd
+from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
@@ -82,6 +83,20 @@ def buscar_odds_melhores(fixture_id):
         
     return melhores_odds
 
+def deve_executar_agora():
+    agora = datetime.now()
+    dia_semana = agora.weekday() # 0 a 4 = Seg a Sex, 5 = Sáb, 6 = Dom
+    hora = agora.hour
+    minuto = agora.minute
+    hora_atual_decimal = hora + minuto / 60.0
+
+    # Segunda a Sexta: das 12:00 às 23:59
+    if dia_semana < 5:
+        return 12.0 <= hora_atual_decimal <= 23.99
+    # Sábado e Domingo: desativar apenas entre 01:00 e 06:59 (ou seja, roda das 07:00 às 00:59)
+    else:
+        return not (1.0 <= hora_atual_decimal < 7.0)
+
 def rodar_varredura():
     print("🔄 Varredura iniciada...")
     ids_monitorados = carregar_ids_excel()
@@ -154,7 +169,7 @@ def rodar_varredura():
                             for stat in away_stats:
                                 if stat['type'] == 'Total Shots' and stat['value'] is not None:
                                     away_total_shots = int(stat['value'])
-                        
+                            
                             if fixture_id not in historico_partidas:
                                 historico_partidas[fixture_id] = []
                             
@@ -202,12 +217,17 @@ def rodar_varredura():
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô institucional ligado e varrendo a API-Football...")
-    enviar_telegram("🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse >= 60%, Finalizações >= 50%, Sem Vermelho e >= 5 Ataques Perigosos recentes.")
+    print("🤖 Robô institucional ligado e configurado com controle de horários...")
+    enviar_telegram("🤖 *Robô institucional de cantos HT ligado!*\n• Janela ativa: Seg–Sex (12h-00h) | Sáb–Dom (exceto 01h-07h)\n• Intervalo de varredura: a cada 5 minutos.")
     
     while True:
         try:
-            rodar_varredura()
+            if deve_executar_agora():
+                rodar_varredura()
+            else:
+                print("💤 Fora da janela operacional permitida. O bot está em repouso economizando créditos...")
         except Exception as e:
             print(f"❌ Erro crítico na varredura: {e}")
-        time.sleep(60)
+        
+        # Intervalo atualizado para 5 minutos (300 segundos)
+        time.sleep(300)
