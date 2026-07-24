@@ -1,8 +1,24 @@
 import os
 import time
+from datetime import datetime, timezone, timedelta
+import threading
+import http.server
+import socketserver
 import requests
 import pandas as pd
 
+# Servidor HTTP simples para manter a porta 10000 aberta (Evita que o Render derrube o background worker)
+PORT = int(os.getenv("PORT", 10000))
+def iniciar_servidor_web():
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print(f"Servidor web rodando na porta {PORT} para satisfazer o Render...")
+        httpd.serve_forever()
+
+# Inicia o servidor web em uma thread separada para não travar o bot
+threading.Thread(target=iniciar_servidor_web, daemon=True).start()
+
+# Configurações de Tokens e Chaves
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
@@ -52,25 +68,18 @@ def buscar_eventos_partida(fixture_id):
     return []
 
 def buscar_odds_melhores(fixture_id):
-    url = "https://v3.football.api-sports.io/odds"
-    headers = {"x-apisports-key": API_FOOTBALL_KEY}
     bookmakers_alvo = [8, 34]
-    
     melhores_odds = {
         "hc_05": {"odd": 0.0, "casa": "-"},
         "hc_10": {"odd": 0.0, "casa": "-"},
         "hc_15": {"odd": 0.0, "casa": "-"},
         "mais_cantos": {"odd": 0.0, "casa": "-"}
     }
-    
     try:
         for book_id in bookmakers_alvo:
             nome_casa = "Pinnacle" if book_id == 8 else "Betano"
-            response = requests.get(url, headers=headers, params={"fixture": fixture_id, "bookmaker": book_id}, timeout=8)
-            
             odds_pins = {"hc_05": 1.85, "hc_10": 2.10, "hc_15": 2.65, "mais_cantos": 1.95}
             odds_beta = {"hc_05": 1.80, "hc_10": 2.15, "hc_15": 2.55, "mais_cantos": 1.90}
-            
             ativas = odds_pins if nome_casa == "Pinnacle" else odds_beta
             
             for k in ["hc_05", "hc_10", "hc_15", "mais_cantos"]:
@@ -79,7 +88,6 @@ def buscar_odds_melhores(fixture_id):
                     melhores_odds[k]["casa"] = nome_casa
     except Exception as e:
         print(f"⚠️ Erro ao buscar odds para o jogo {fixture_id}: {e}")
-        
     return melhores_odds
 
 def rodar_varredura():
@@ -210,4 +218,4 @@ if __name__ == "__main__":
             rodar_varredura()
         except Exception as e:
             print(f"❌ Erro crítico na varredura: {e}")
-        time.sleep
+        time.sleep(300)
