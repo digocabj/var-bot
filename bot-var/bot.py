@@ -8,15 +8,7 @@ import requests
 import pandas as pd
 
 # Servidor HTTP simples para manter a porta 10000 aberta (Evita que o Render derrube o background worker)
-PORT = int(os.getenv("PORT", 10000))
-def iniciar_servidor_web():
-    Handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"Servidor web rodando na porta {PORT} para satisfazer o Render...")
-        httpd.serve_forever()
 
-# Inicia o servidor web em uma thread separada para não travar o bot
-threading.Thread(target=iniciar_servidor_web, daemon=True).start()
 
 # Configurações de Tokens e Chaves
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
