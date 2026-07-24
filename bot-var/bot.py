@@ -4,119 +4,136 @@ from datetime import datetime, timezone, timedelta
 import requests
 import pandas as pd
 
-# Configurações de Tokens e Chaves
+# Suas credenciais e tokens
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
 
+# Controle para evitar mensagens repetidas e reprocessamento desnecessário
 alertas_enviados = set()
-historico_partidas = {}
+partidas_checadas_janela = set()
 
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensagem,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"⚠️ Erro ao enviar mensagem no Telegram: {e}")
+        print(f"⚠️ Erro Telegram: {e}")
 
 def carregar_ids_excel():
     try:
         df = pd.read_excel("sua_lista_de_times.xlsx")
-        ids = df['api_football_id'].dropna().astype(int).tolist()
-        return ids
+        return df['api_football_id'].dropna().astype(int).tolist()
     except Exception as e:
-        print(f"⚠️ Erro ao carregar a planilha de times: {e}")
+        print(f"⚠️ Erro ao carregar planilha: {e}")
         return []
 
-def buscar_estatisticas_detalhadas(fixture_id):
-    url = "https://v3.football.api-sports.io/fixtures/statistics"
+def buscar_odds_mercados(fixture_id, current_home_corners):
+    """
+    Busca as odds ao vivo com identificação flexível e segura (case-insensitive) 
+    para Pinnacle, Betano e Superbet.
+    """
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    try:
-        response = requests.get(url, headers=headers, params={"fixture": fixture_id}, timeout=10)
-        return response.json().get('response', [])
-    except Exception as e:
-        print(f"⚠️ Erro ao buscar estatísticas da partida {fixture_id}: {e}")
-        return []
-
-def buscar_eventos_partida(fixture_id):
-    url = f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}"
-    headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    try:
-        resposta = requests.get(url, headers=headers, timeout=10)
-        if resposta.status_code == 200:
-            return resposta.json().get("response", [])
-    except Exception as e:
-        print(f"⚠️ Erro ao buscar eventos do jogo {fixture_id}: {e}")
-    return []
-
-def buscar_odds_melhores(fixture_id):
-    bookmakers_alvo = [8, 34]
-    melhores_odds = {
-        "hc_05": {"odd": 0.0, "casa": "-"},
-        "hc_10": {"odd": 0.0, "casa": "-"},
-        "hc_15": {"odd": 0.0, "casa": "-"},
-        "mais_cantos": {"odd": 0.0, "casa": "-"}
+    url_odds = f"https://v3.football.api-sports.io/odds/live"
+    
+    resultado_odds = {
+        "pinnacle_ah": {"-0.5": "N/A", "-1.0": "N/A", "-1.5": "N/A"},
+        "team_corners": {
+            "Pinnacle": "N/A",
+            "Betano": "N/A",
+            "Superbet": "N/A"
+        }
     }
+
     try:
-        for book_id in bookmakers_alvo:
-            nome_casa = "Pinnacle" if book_id == 8 else "Betano"
-            odds_pins = {"hc_05": 1.85, "hc_10": 2.10, "hc_15": 2.65, "mais_cantos": 1.95}
-            odds_beta = {"hc_05": 1.80, "hc_10": 2.15, "hc_15": 2.55, "mais_cantos": 1.90}
-            ativas = odds_pins if nome_casa == "Pinnacle" else odds_beta
+        response = requests.get(url_odds, headers=headers, params={"fixture": fixture_id}, timeout=10)
+        dados_odds = response.json().get('response', [])
+        
+        if not dados_odds:
+            return resultado_odds
+
+        # Alvo exato para +2 cantos a partir do atual (Ex: 4 cantos + 1.5 = linha 5.5)
+        target_line = current_home_corners + 1.5
+
+        for bookmaker in dados_odds.get('bookmakers', []):
+            nome_raw = bookmaker.get('name', '').strip().lower()
             
-            for k in ["hc_05", "hc_10", "hc_15", "mais_cantos"]:
-                if ativas[k] > melhores_odds[k]["odd"]:
-                    melhores_odds[k]["odd"] = ativas[k]
-                    melhores_odds[k]["casa"] = nome_casa
+            casa_atual = None
+            if "pinnacle" in nome_raw:
+                casa_atual = "Pinnacle"
+            elif "betano" in nome_raw:
+                casa_atual = "Betano"
+            elif "superbet" in nome_raw:
+                casa_atual = "Superbet"
+            else:
+                continue
+
+            for bet in bookmaker.get('bets', []):
+                bet_name = bet.get('name', '').lower()
+                if "corner" in bet_name:
+                    for value in bet.get('values', []):
+                        handicap_str = str(value.get('value', ''))
+                        odd_val = value.get('odd', 'N/A')
+                        
+                        # Filtro para a Pinnacle: Handicap Asiático de Cantos HT (-0.5, -1.0, -1.5)
+                        if casa_atual == "Pinnacle":
+                            if "-0.5" in handicap_str:
+                                resultado_odds["pinnacle_ah"]["-0.5"] = odd_val
+                            elif "-1.0" in handicap_str:
+                                resultado_odds["pinnacle_ah"]["-1.0"] = odd_val
+                            elif "-1.5" in handicap_str:
+                                resultado_odds["pinnacle_ah"]["-1.5"] = odd_val
+
+                        # Linha de cantos do mandante (+2 do atual -> Ex: 4 cantos busca Over 5.5)
+                        try:
+                            line_num = float(''.join(c for c in handicap_str if c.isdigit() or c == '.'))
+                            if line_num == target_line and "over" in handicap_str.lower():
+                                resultado_odds["team_corners"][casa_atual] = f"{handicap_str} @ {odd_val}"
+                        except:
+                            pass
+
     except Exception as e:
-        print(f"⚠️ Erro ao buscar odds para o jogo {fixture_id}: {e}")
-    return melhores_odds
+        print(f"⚠️ Erro ao buscar odds: {e}")
+
+    return resultado_odds
 
 def rodar_varredura():
-    # Sincronia de fuso horário com o Brasil (UTC-3)
     fuso_brasil = timezone(timedelta(hours=-3))
     agora_brasil = datetime.now(fuso_brasil)
-    dia_semana = agora_brasil.weekday()  # 0 a 4 = Seg-Sex, 5 = Sáb, 6 = Dom
+    dia_semana = agora_brasil.weekday()
     hora_atual = agora_brasil.hour
 
-    # Validação da Janela Operacional solicitada:
-    # - Segunda a Sexta: das 12:00 às 23:59
-    # - Sábado e Domingo: O dia todo, exceto das 01:00 às 06:59
     permitido = False
-    if dia_semana <= 4:  # Segunda a Sexta
+    if dia_semana <= 4:
         if hora_atual >= 12:
             permitido = True
-    else:  # Sábado e Domingo
+    else:
         if not (1 <= hora_atual <= 6):
             permitido = True
 
     if not permitido:
-        print(f"💤 Fora do horário operacional ({agora_brasil.strftime('%d/%m %H:%M')} BR). Aguardando...")
+        print(f"💤 Fora do horário operacional ({agora_brasil.strftime('%d/%m %H:%M')} BR).")
         return
 
-    print("🔄 Varredura iniciada dentro da janela permitida...")
     ids_monitorados = carregar_ids_excel()
-    
     if not ids_monitorados:
-        print("⚠️ Nenhum ID encontrado na planilha ou planilha indisponível.")
+        print("⚠️ Planilha vazia ou não encontrada.")
         return
-    
+
     url = "https://v3.football.api-sports.io/fixtures"
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
     
     try:
         response = requests.get(url, headers=headers, params={"live": "all"}, timeout=15)
-        dados = response.json()
+        dados = response.json().get('response', [])
     except Exception as e:
-        print(f"⚠️ Erro na conexão com a API de fixtures: {e}")
+        print(f"⚠️ Erro na API de fixtures: {e}")
         return
-    
-    for match in dados.get('response', []):
+
+    print(f"🔄 Varredura rodando... {len(dados)} jogos ao vivo no mundo agora.")
+
+    for match in dados:
         try:
             fixture_id = match['fixture']['id']
             home_id = match['teams']['home']['id']
@@ -124,106 +141,79 @@ def rodar_varredura():
             if home_id in ids_monitorados:
                 elapsed = match['fixture']['status']['elapsed']
                 
-                if elapsed is not None and 1 <= elapsed <= 35:
+                if elapsed is not None and 20 <= elapsed <= 35:
                     home_goals = match['goals']['home'] or 0
                     away_goals = match['goals']['away'] or 0
                     
-                    if home_goals <= away_goals:
-                        eventos = buscar_eventos_partida(fixture_id)
-                        tem_expulsao_casa = False
-                        for ev in eventos:
-                            if ev.get("team", {}).get("id") == home_id:
-                                if ev.get("type") == "Card" and "Red" in ev.get("detail", ""):
-                                    tem_expulsao_casa = True
-                                    break
+                    if home_goals > away_goals:
+                        continue
                     
-                        if tem_expulsao_casa:
-                            continue 
+                    chave_checagem = f"{fixture_id}_{elapsed // 5}"
+                    if chave_checagem in partidas_checadas_janela:
+                        continue
+                    partidas_checadas_janela.add(chave_checagem)
 
-                        stats = buscar_estatisticas_detalhadas(fixture_id)
-                        if stats and len(stats) >= 2:
-                            home_stats, away_stats = None, None
-                            for team_stat in stats:
-                                if team_stat['team']['id'] == home_id:
-                                    home_stats = team_stat['statistics']
-                                else:
-                                    away_stats = team_stat['statistics']
-                            
-                            if not home_stats or not away_stats:
-                                continue
+                    ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
+                    tem_expulsao = any(
+                        ev.get("team", {}).get("id") == home_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
+                        for ev in ev_resp.json().get("response", [])
+                    )
+                    if tem_expulsao:
+                        continue
 
-                            possession = 0
-                            home_total_shots = 0
-                            away_total_shots = 0
-                            dangerous_attacks = 0
-
-                            for stat in home_stats:
-                                stype = stat['type']
-                                val = stat['value']
-                                if stype == 'Ball Possession' and val:
-                                    possession = int(str(val).replace('%', ''))
-                                elif stype == 'Total Shots' and val is not None:
-                                    home_total_shots = int(val)
-                                elif stype == 'Dangerous Attacks' and val is not None:
-                                    dangerous_attacks = int(val)
-
-                            for stat in away_stats:
-                                if stat['type'] == 'Total Shots' and stat['value'] is not None:
-                                    away_total_shots = int(stat['value'])
+                    stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
+                    stats = stats_resp.json().get('response', [])
                     
-                            if fixture_id not in historico_partidas:
-                                historico_partidas[fixture_id] = []
-                            
-                            historico_partidas[fixture_id].append({"minuto": elapsed, "ataques": dangerous_attacks})
-                            historico_partidas[fixture_id] = [h for h in historico_partidas[fixture_id] if h["minuto"] >= elapsed - 10]
-                            
-                            ataques_ultimos_10min = 0
-                            if len(historico_partidas[fixture_id]) > 0:
-                                ataques_ultimos_10min = dangerous_attacks - historico_partidas[fixture_id][0]["ataques"]
-
-                            condicao_finalizacoes = home_total_shots >= (away_total_shots * 1.5)
-                            
-                            if possession >= 60 and condicao_finalizacoes and ataques_ultimos_10min >= 5:
-                                alerta_key = f"{fixture_id}_{elapsed}"
-                                if alerta_key not in alertas_enviados:
-                                    home_name = match['teams']['home']['name']
-                                    away_name = match['teams']['away']['name']
-                                    league_name = match['league']['name']
-                                    
-                                    melhores_odds = buscar_odds_melhores(fixture_id)
-                                    
-                                    mensagem = (
-                                        f"🚨 **ALERTA DE PRESSÃO HT & CANTOS** 🚨\n\n"
-                                        f"🏆 **Liga:** {league_name}\n"
-                                        f"🏠 **{home_name}** vs {away_name}\n"
-                                        f"⏱ Minuto: **{elapsed}'**\n"
-                                        f"⚽ Placar: **{home_goals} - {away_goals}**\n\n"
-                                        f"📊 **Métricas do Mandante:**\n"
-                                        f"• Posse de Bola: **{possession}%**\n"
-                                        f"• Ataques Perigosos (Últimos 10'): **+{ataques_ultimos_10min}**\n"
-                                        f"• Finalizações Totais: **{home_total_shots} vs {away_total_shots} (Visitante)**\n\n"
-                                        f"📈 **Melhores Odds (Mercado HT):**\n"
-                                        f"• **Handicap Cantos (-0.5):** **@{melhores_odds['hc_05']['odd']}** *({melhores_odds['hc_05']['casa']})*\n"
-                                        f"• **Handicap Cantos (-1.0):** **@{melhores_odds['hc_10']['odd']}** *({melhores_odds['hc_10']['casa']})*\n"
-                                        f"• **Handicap Cantos (-1.5):** **@{melhores_odds['hc_15']['odd']}** *({melhores_odds['hc_15']['casa']})*\n"
-                                        f"• **Mais 2 Cantos HT:** **@{melhores_odds['mais_cantos']['odd']}** *({melhores_odds['mais_cantos']['casa']})*\n\n"
-                                        f"💡 *Filtros estritos aplicados com sucesso!*"
-                                    )
-                                    
-                                    enviar_telegram(mensagem)
-                                    alertas_enviados.add(alerta_key)
-                                    print(f"✅ Alerta enviado: {home_name} vs {away_name}")
+                    if stats and len(stats) >= 2:
+                        home_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
+                        away_stats = next((s['statistics'] for s in stats if s['team']['id'] != home_id), [])
+                        
+                        possession = int(str(next((s['value'] for s in home_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
+                        home_shots = int(next((s['value'] for s in home_stats if s['type'] == 'Total Shots'), 0) or 0)
+                        away_shots = int(next((s['value'] for s in away_stats if s['type'] == 'Total Shots'), 0) or 0)
+                        home_corners = int(next((s['value'] for s in home_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+                        
+                        if possession >= 60 and home_shots >= (away_shots * 1.5):
+                            alerta_key = f"{fixture_id}"
+                            if alerta_key not in alertas_enviados:
+                                home_name = match['teams']['home']['name']
+                                away_name = match['teams']['away']['name']
+                                league_name = match['league']['name']
+                                
+                                odds_dados = buscar_odds_mercados(fixture_id, home_corners)
+                                pinn_ah = odds_dados["pinnacle_ah"]
+                                team_c = odds_dados["team_corners"]
+                                
+                                mensagem = (
+                                    f"🚨 **ALERTA DE PRESSÃO HT & ODDS** 🚨\n\n"
+                                    f"🏆 **Liga:** {league_name}\n"
+                                    f"🏠 **{home_name}** vs {away_name}\n"
+                                    f"⏱ Minuto: **{elapsed}'** | Placar: **{home_goals}-{away_goals}**\n"
+                                    f"📊 Posse: **{possession}%** | Chutes: **{home_shots} vs {away_shots}** | Cantos: **{home_corners}**\n\n"
+                                    f"🟡 **Handicap Asiático Cantos HT (Pinnacle):**\n"
+                                    f"• -0.5: `{pinn_ah['-0.5']}`\n"
+                                    f"• -1.0: `{pinn_ah['-1.0']}`\n"
+                                    f"• -1.5: `{pinn_ah['-1.5']}`\n\n"
+                                    f"🔵 **Linha Cantos Casa (+2 do atual):**\n"
+                                    f"• Pinnacle: `{team_c.get('Pinnacle', 'N/A')}`\n"
+                                    f"• Betano: `{team_c.get('Betano', 'N/A')}`\n"
+                                    f"• Superbet: `{team_c.get('Superbet', 'N/A')}`"
+                                )
+                                enviar_telegram(mensagem)
+                                alertas_enviados.add(alerta_key)
+                                print(f"✅ Alerta com odds enviado: {home_name} vs {away_name}")
+                                
         except Exception as match_err:
-            print(f"⚠️ Erro ao processar partida individual: {match_err}")
+            print(f"⚠️ Erro ao processar partida {match_err}")
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô institucional ligado e configurado com janelas de horário!")
-    enviar_telegram("🤖 *Robô institucional de cantos HT ligado e operando com horários programados!*")
+    print("🤖 Robô otimizado com mercados de cantos e handicap iniciado!")
+    enviar_telegram("🤖 *Robô otimizado com mercados de cantos e handicap ligado!*")
     
     while True:
         try:
             rodar_varredura()
         except Exception as e:
-            print(f"❌ Erro crítico na varredura: {e}")
-        time.sleep(300)
+            print(f"❌ Erro crítico: {e}")
+        time.sleep(600)
