@@ -128,7 +128,7 @@ def rodar_varredura():
                                 if ev.get("type") == "Card" and "Red" in ev.get("detail", ""):
                                     tem_expulsao_casa = True
                                     break
-                        
+                    
                         if tem_expulsao_casa:
                             continue 
 
@@ -162,7 +162,7 @@ def rodar_varredura():
                             for stat in away_stats:
                                 if stat['type'] == 'Total Shots' and stat['value'] is not None:
                                     away_total_shots = int(stat['value'])
-                        
+                    
                             if fixture_id not in historico_partidas:
                                 historico_partidas[fixture_id] = []
                             
