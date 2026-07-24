@@ -1,14 +1,8 @@
 import os
 import time
 from datetime import datetime, timezone, timedelta
-import threading
-import http.server
-import socketserver
 import requests
 import pandas as pd
-
-# Servidor HTTP simples para manter a porta 10000 aberta (Evita que o Render derrube o background worker)
-
 
 # Configurações de Tokens e Chaves
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
@@ -33,7 +27,8 @@ def enviar_telegram(mensagem):
 def carregar_ids_excel():
     try:
         df = pd.read_excel("sua_lista_de_times.xlsx")
-        return df['api_football_id'].dropna().astype(int).tolist()
+        ids = df['api_football_id'].dropna().astype(int).tolist()
+        return ids
     except Exception as e:
         print(f"⚠️ Erro ao carregar a planilha de times: {e}")
         return []
@@ -83,7 +78,28 @@ def buscar_odds_melhores(fixture_id):
     return melhores_odds
 
 def rodar_varredura():
-    print("🔄 Varredura iniciada...")
+    # Sincronia de fuso horário com o Brasil (UTC-3)
+    fuso_brasil = timezone(timedelta(hours=-3))
+    agora_brasil = datetime.now(fuso_brasil)
+    dia_semana = agora_brasil.weekday()  # 0 a 4 = Seg-Sex, 5 = Sáb, 6 = Dom
+    hora_atual = agora_brasil.hour
+
+    # Validação da Janela Operacional solicitada:
+    # - Segunda a Sexta: das 12:00 às 23:59
+    # - Sábado e Domingo: O dia todo, exceto das 01:00 às 06:59
+    permitido = False
+    if dia_semana <= 4:  # Segunda a Sexta
+        if hora_atual >= 12:
+            permitido = True
+    else:  # Sábado e Domingo
+        if not (1 <= hora_atual <= 6):
+            permitido = True
+
+    if not permitido:
+        print(f"💤 Fora do horário operacional ({agora_brasil.strftime('%d/%m %H:%M')} BR). Aguardando...")
+        return
+
+    print("🔄 Varredura iniciada dentro da janela permitida...")
     ids_monitorados = carregar_ids_excel()
     
     if not ids_monitorados:
@@ -202,8 +218,8 @@ def rodar_varredura():
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô institucional ligado e varrendo a API-Football...")
-    enviar_telegram("🤖 *Robô institucional de cantos HT ligado e operando!*\n• Filtros ativos: Posse >= 60%, Finalizações >= 50%, Sem Vermelho e >= 5 Ataques Perigosos recentes.")
+    print("🤖 Robô institucional ligado e configurado com janelas de horário!")
+    enviar_telegram("🤖 *Robô institucional de cantos HT ligado e operando com horários programados!*")
     
     while True:
         try:
