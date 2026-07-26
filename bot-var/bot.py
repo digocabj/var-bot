@@ -5,22 +5,51 @@ import requests
 import pandas as pd
 import fcntl
 
-# Suas credenciais e tokens
+# Credenciais e tokens
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
 
-ARQUIVO_HISTORICO = "historico_alertas.txt"
+# Caminho persistente no Render (com fallback local para testes na máquina)
+if os.path.exists("/data"):
+    ARQUIVO_HISTORICO = "/data/historico_alertas.txt"
+else:
+    ARQUIVO_HISTORICO = "historico_alertas.txt"
+
+def ja_foi_enviado(fixture_id):
+    """
+    Verifica rapidamente se o jogo já foi alertado ANTES de chamar a API,
+    economizando créditos de requisições.
+    """
+    fixture_str = str(fixture_id)
+    if not os.path.exists(ARQUIVO_HISTORICO):
+        return False
+    try:
+        with open(ARQUIVO_HISTORICO, "r") as f:
+            linhas = [line.strip() for line in f if line.strip()]
+            return fixture_str in linhas
+    except Exception:
+        return False
 
 def verificar_e_registrar_envio(fixture_id):
     """
-    Usa trava de arquivo para garantir alerta único, 
-    mesmo se houver sobreposição de instâncias no Render.
+    Trava atômica de arquivo para garantir registro único e evitar duplicidade
+    mesmo com sobreposição de processos.
     """
     fixture_str = str(fixture_id)
     
+    dir_name = os.path.dirname(ARQUIVO_HISTORICO)
+    if dir_name and not os.path.exists(dir_name):
+        try:
+            os.makedirs(dir_name, exist_ok=True)
+        except Exception:
+            pass
+
     if not os.path.exists(ARQUIVO_HISTORICO):
-        with open(ARQUIVO_HISTORICO, "w") as f:
+        try:
+            with open(ARQUIVO_HISTORICO, "w") as f:
+                pass
+        except Exception:
             pass
 
     try:
@@ -99,6 +128,10 @@ def rodar_varredura():
             home_id = match['teams']['home']['id']
             
             if home_id in ids_monitorados:
+                # 1. Se já foi enviado antes, pula AGORA e economiza créditos da API
+                if ja_foi_enviado(fixture_id):
+                    continue
+
                 elapsed = match['fixture']['status']['elapsed']
                 
                 if elapsed is not None and 20 <= elapsed <= 35:
@@ -129,6 +162,7 @@ def rodar_varredura():
                         home_corners = int(next((s['value'] for s in home_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                         
                         if possession >= 60 and home_shots >= (away_shots * 1.5):
+                            # Trava final atômica antes do disparo
                             if verificar_e_registrar_envio(fixture_id):
                                 home_name = match['teams']['home']['name']
                                 away_name = match['teams']['away']['name']
@@ -144,19 +178,19 @@ def rodar_varredura():
                                     f"🚩 Cantos (Casa): **{home_corners}**"
                                 )
                                 enviar_telegram(mensagem)
-                                print(f"✅ Alerta limpo enviado e travado com sucesso: {home_name} vs {away_name}")
-                                
+                                print(f"✅ Alerta enviado e travado com sucesso: {home_name} vs {away_name}")
+                            
         except Exception as match_err:
             print(f"⚠️ Erro ao processar partida {match_err}")
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô limpo (focado em estatísticas) iniciado com sucesso!")
-    enviar_telegram("🤖 *Robô de pressão HT limpo e blindado ligado!*")
+    print("🤖 Robô otimizado e blindado iniciado com sucesso!")
+    enviar_telegram("🤖 *Robô de pressão HT otimizado e blindado ligado!*")
     
     while True:
         try:
             rodar_varredura()
         except Exception as e:
             print(f"❌ Erro crítico: {e}")
-        time.sleep(600)
+        time.sleep(300)  # Varredura a cada 5 minutos para não perder nenhuma janela
