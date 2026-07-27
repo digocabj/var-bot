@@ -18,7 +18,6 @@ def inicializar_banco():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # Tabela expandida com o contexto completo do alerta
         cur.execute("""
             CREATE TABLE IF NOT EXISTS historico_alertas (
                 fixture_id VARCHAR(50) PRIMARY KEY,
@@ -159,13 +158,11 @@ def rodar_varredura():
                 home_goals = match['goals']['home'] or 0
                 away_goals = match['goals']['away'] or 0
                 
-                # Diagnóstico de Placar
                 if eh_mandante and home_goals > away_goals:
                     continue
                 if not eh_mandante and away_goals > home_goals:
                     continue
                 
-                # Diagnóstico de Vermelho
                 ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
                 tem_expulsao = any(
                     ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
@@ -175,7 +172,6 @@ def rodar_varredura():
                     print(f"🔍 [Diagnóstico] {home_name} vs {away_name} ignorado: Cartão vermelho para o time monitorado.")
                     continue
 
-                # Estatísticas
                 stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
                 stats = stats_resp.json().get('response', [])
                 
@@ -200,20 +196,18 @@ def rodar_varredura():
                         shots_adv = h_shots
                         corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                     
-                    # Validação final
-                    meta_chutes = int(shots_adv * 1.5)
-                    if possession >= 60 and shots_alvo >= meta_chutes:
+                    # Validação rigorosa: Exige posse >= 60%, adversário com mais de 0 chutes, e proporção mínima de 1.7x
+                    if possession >= 60 and shots_adv > 0 and shots_alvo >= (shots_adv * 1.7):
                         if not ja_foi_enviado(fixture_id):
                             league_name = match['league']['name']
                             match_name = f"{home_name} vs {away_name}"
                             
-                            # Registra no Supabase com todo o contexto (0 créditos extras!)
                             registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, possession)
                             
                             time_pressionando = home_name if eh_mandante else away_name
                             
                             mensagem = (
-                                f"🚨 **ALERTA DE PRESSÃO HT** 🚨\n\n"
+                                f"🚨 **ALERTA DE PRESSÃO HT (1.7x)** 🚨\n\n"
                                 f"🏆 **Liga:** {league_name}\n"
                                 f"🏠 {home_name} vs {away_name} ⚽\n"
                                 f"🔥 **Pressionando:** {time_pressionando}\n"
