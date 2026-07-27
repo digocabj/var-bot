@@ -2,3 +2,4 @@ requests
 pandas
 openpyxl
 python-telegram-bot
+psycopg2-binary
