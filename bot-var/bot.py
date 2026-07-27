@@ -18,9 +18,17 @@ def inicializar_banco():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
+        # Tabela expandida com o contexto completo do alerta
         cur.execute("""
             CREATE TABLE IF NOT EXISTS historico_alertas (
                 fixture_id VARCHAR(50) PRIMARY KEY,
+                league_name TEXT,
+                match_name TEXT,
+                minuto INT,
+                corners_ht INT,
+                posse_casa INT,
+                corners_fim_ht INT,
+                resultado_status VARCHAR(10),
                 data_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -46,7 +54,7 @@ def ja_foi_enviado(fixture_id):
         print(f"❌ Erro ao consultar banco: {e}")
         return False
 
-def registrar_envio(fixture_id):
+def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, posse_casa):
     fixture_str = str(fixture_id)
     if not DATABASE_URL:
         print("⚠️ DATABASE_URL não configurada para salvamento!")
@@ -55,13 +63,18 @@ def registrar_envio(fixture_id):
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO historico_alertas (fixture_id) VALUES (%s) ON CONFLICT (fixture_id) DO NOTHING;",
-            (fixture_str,)
+            """
+            INSERT INTO historico_alertas 
+            (fixture_id, league_name, match_name, minuto, corners_ht, posse_casa) 
+            VALUES (%s, %s, %s, %s, %s, %s) 
+            ON CONFLICT (fixture_id) DO NOTHING;
+            """,
+            (fixture_str, league_name, match_name, minuto, corners_ht, posse_casa)
         )
         conn.commit()
         cur.close()
         conn.close()
-        print(f"💾 Jogo {fixture_str} salvo no Supabase com sucesso!")
+        print(f"💾 Jogo {match_name} salvo no Supabase com sucesso!")
     except Exception as e:
         print(f"❌ Erro ao salvar no PostgreSQL: {e}")
 
@@ -187,13 +200,16 @@ def rodar_varredura():
                         shots_adv = h_shots
                         corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                     
-                    # Validação final com Diagnóstico Silencioso nos Logs caso filtre fora
+                    # Validação final
                     meta_chutes = int(shots_adv * 1.5)
                     if possession >= 60 and shots_alvo >= meta_chutes:
                         if not ja_foi_enviado(fixture_id):
-                            registrar_envio(fixture_id)
-                            
                             league_name = match['league']['name']
+                            match_name = f"{home_name} vs {away_name}"
+                            
+                            # Registra no Supabase com todo o contexto (0 créditos extras!)
+                            registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, possession)
+                            
                             time_pressionando = home_name if eh_mandante else away_name
                             
                             mensagem = (
@@ -209,8 +225,8 @@ def rodar_varredura():
                             enviar_telegram(mensagem)
                             print(f"✅ Alerta disparado e salvo no banco: {home_name} vs {away_name}")
                     else:
-                        print(f"🔍 [Quase-Padrão] {home_name} vs {away_name} ({elapsed}') | Alvo: {'Casa' if eh_mandante else 'Fora'} | Posse: {possession}% (Mín: 60%) | Chutes: {shots_alvo} vs {shots_adv} (Mín Chutes Alvo: {meta_chutes})")
-                            
+                        print(f"🔍 [Quase-Padrão] {home_name} vs {away_name} ({elapsed}') | Posse: {possession}% | Chutes: {shots_alvo} vs {shots_adv}")
+                        
         except Exception as match_err:
             print(f"⚠️ Erro ao processar partida: {match_err}")
             continue
