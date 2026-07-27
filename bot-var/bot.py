@@ -3,73 +3,54 @@ import time
 from datetime import datetime, timezone, timedelta
 import requests
 import pandas as pd
-import fcntl
 
 # Credenciais e tokens
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
 
-# Caminho persistente no Render (com fallback local para testes na máquina)
-if os.path.exists("/data"):
-    ARQUIVO_HISTORICO = "/data/historico_alertas.txt"
-else:
-    ARQUIVO_HISTORICO = "historico_alertas.txt"
+# Caminho obrigatório no disco persistente do Render
+ARQUIVO_HISTORICO = "/data/historico_alertas.txt"
 
-def ja_foi_enviado(fixture_id):
-    """
-    Verifica rapidamente se o jogo já foi alertado ANTES de chamar a API,
-    economizando créditos de requisições.
-    """
-    fixture_str = str(fixture_id)
-    if not os.path.exists(ARQUIVO_HISTORICO):
-        return False
+# 🛡️ TRAVA EM MEMÓRIA: Impede duplicação instantânea na mesma execução
+CACHE_MEMORIA_ALERTAS = set()
+
+def inicializar_disco_e_cache():
+    """Garante que a pasta /data e o arquivo existam e carrega os IDs na memória."""
+    global CACHE_MEMORIA_ALERTAS
     try:
-        with open(ARQUIVO_HISTORICO, "r") as f:
-            linhas = [line.strip() for line in f if line.strip()]
-            return fixture_str in linhas
-    except Exception:
-        return False
-
-def verificar_e_registrar_envio(fixture_id):
-    """
-    Trava atômica de arquivo para garantir registro único e evitar duplicidade
-    mesmo com sobreposição de processos.
-    """
-    fixture_str = str(fixture_id)
-    
-    dir_name = os.path.dirname(ARQUIVO_HISTORICO)
-    if dir_name and not os.path.exists(dir_name):
-        try:
-            os.makedirs(dir_name, exist_ok=True)
-        except Exception:
-            pass
-
-    if not os.path.exists(ARQUIVO_HISTORICO):
-        try:
+        os.makedirs(os.path.dirname(ARQUIVO_HISTORICO), exist_ok=True)
+        if os.path.exists(ARQUIVO_HISTORICO):
+            with open(ARQUIVO_HISTORICO, "r") as f:
+                for linha in f:
+                    val = linha.strip()
+                    if val:
+                        CACHE_MEMORIA_ALERTAS.add(val)
+            print(f"📁 Histórico carregado com sucesso! Total de jogos já alertados salvos no disco: {len(CACHE_MEMORIA_ALERTAS)}")
+        else:
             with open(ARQUIVO_HISTORICO, "w") as f:
                 pass
-        except Exception:
-            pass
+            print("📁 Arquivo de histórico criado do zero no disco persistente.")
+    except Exception as e:
+        print(f"⚠️ Erro ao inicializar disco persistente: {e}")
 
+def ja_foi_enviado(fixture_id):
+    """Verifica se o jogo já está na memória ou no disco."""
+    fixture_str = str(fixture_id)
+    return fixture_str in CACHE_MEMORIA_ALERTAS
+
+def registrar_envio(fixture_id):
+    """Salva o ID na memória e grava imediatamente no disco do Render."""
+    fixture_str = str(fixture_id)
+    CACHE_MEMORIA_ALERTAS.add(fixture_str)
     try:
-        with open(ARQUIVO_HISTORICO, "r+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            linhas = [line.strip() for line in f if line.strip()]
-            
-            if fixture_str in linhas:
-                fcntl.flock(f, fcntl.LOCK_UN)
-                return False 
-            
-            f.seek(0, os.SEEK_END)
+        os.makedirs(os.path.dirname(ARQUIVO_HISTORICO), exist_ok=True)
+        with open(ARQUIVO_HISTORICO, "a") as f:
             f.write(f"{fixture_str}\n")
             f.flush()
-            
-            fcntl.flock(f, fcntl.LOCK_UN)
-            return True
+        print(f"💾 Jogo {fixture_str} travado e salvo com sucesso no disco!")
     except Exception as e:
-        print(f"⚠️ Erro no controle de histórico: {e}")
-        return True
+        print(f"❌ ERRO CRÍTICO AO SALVAR NO DISCO: {e}")
 
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -95,10 +76,12 @@ def rodar_varredura():
 
     permitido = False
     if dia_semana <= 4:
+        # Segunda a Sexta: a partir das 12:00
         if hora_atual >= 12:
             permitido = True
     else:
-        if not (1 <= hora_atual <= 6):
+        # Sábado e Domingo: exceto das 01:00 às 08:00
+        if not (1 <= hora_atual <= 8):
             permitido = True
 
     if not permitido:
@@ -128,7 +111,6 @@ def rodar_varredura():
             home_id = match['teams']['home']['id']
             
             if home_id in ids_monitorados:
-                # 1. Se já foi enviado antes, pula AGORA e economiza créditos da API
                 if ja_foi_enviado(fixture_id):
                     continue
 
@@ -162,8 +144,9 @@ def rodar_varredura():
                         home_corners = int(next((s['value'] for s in home_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                         
                         if possession >= 60 and home_shots >= (away_shots * 1.5):
-                            # Trava final atômica antes do disparo
-                            if verificar_e_registrar_envio(fixture_id):
+                            if not ja_foi_enviado(fixture_id):
+                                registrar_envio(fixture_id)
+                                
                                 home_name = match['teams']['home']['name']
                                 away_name = match['teams']['away']['name']
                                 league_name = match['league']['name']
@@ -178,19 +161,20 @@ def rodar_varredura():
                                     f"🚩 Cantos (Casa): **{home_corners}**"
                                 )
                                 enviar_telegram(mensagem)
-                                print(f"✅ Alerta enviado e travado com sucesso: {home_name} vs {away_name}")
+                                print(f"✅ Alerta disparado e bloqueado com sucesso: {home_name} vs {away_name}")
                             
         except Exception as match_err:
-            print(f"⚠️ Erro ao processar partida {match_err}")
+            print(f"⚠️ Erro ao processar partida: {match_err}")
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô otimizado e blindado iniciado com sucesso!")
-    enviar_telegram("🤖 *Robô de pressão HT otimizado e blindado ligado!*")
+    print("🤖 Robô blindado com intervalo de 3 minutos iniciado!")
+    inicializar_disco_e_cache()
+    enviar_telegram("🤖 *Robô de pressão HT atualizado (intervalo de 3 min) ligado!*")
     
     while True:
         try:
             rodar_varredura()
         except Exception as e:
-            print(f"❌ Erro crítico: {e}")
-        time.sleep(300)  # Varredura a cada 5 minutos para não perder nenhuma janela
+            print(f"❌ Erro crítico no loop principal: {e}")
+        time.sleep(180) # 180 segundos = 3 minutos
