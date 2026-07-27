@@ -3,49 +3,67 @@ import time
 from datetime import datetime, timezone, timedelta
 import requests
 import pandas as pd
+import psycopg2
 
 # Credenciais e tokens
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Caminho no disco persistente do Render
-ARQUIVO_HISTORICO = "/data/historico_alertas.txt"
-
-CACHE_MEMORIA_ALERTAS = set()
-
-def inicializar_disco_e_cache():
-    global CACHE_MEMORIA_ALERTAS
+def inicializar_banco():
+    if not DATABASE_URL:
+        print("⚠️ DATABASE_URL não configurada nas variáveis de ambiente!")
+        return
     try:
-        os.makedirs(os.path.dirname(ARQUIVO_HISTORICO), exist_ok=True)
-        if os.path.exists(ARQUIVO_HISTORICO):
-            with open(ARQUIVO_HISTORICO, "r") as f:
-                for linha in f:
-                    val = linha.strip()
-                    if val:
-                        CACHE_MEMORIA_ALERTAS.add(val)
-            print(f"📁 Histórico carregado! Total de jogos salvos no disco: {len(CACHE_MEMORIA_ALERTAS)}")
-        else:
-            with open(ARQUIVO_HISTORICO, "w") as f:
-                pass
-            print("📁 Arquivo de histórico criado do zero.")
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS historico_alertas (
+                fixture_id VARCHAR(50) PRIMARY KEY,
+                data_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("🗄️ Tabela PostgreSQL (Supabase) inicializada com sucesso!")
     except Exception as e:
-        print(f"⚠️ Erro ao inicializar disco: {e}")
+        print(f"❌ Erro ao inicializar banco de dados: {e}")
 
 def ja_foi_enviado(fixture_id):
-    return str(fixture_id) in CACHE_MEMORIA_ALERTAS
+    if not DATABASE_URL:
+        return False
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM historico_alertas WHERE fixture_id = %s", (str(fixture_id),))
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        return res is not None
+    except Exception as e:
+        print(f"❌ Erro ao consultar banco: {e}")
+        return False
 
 def registrar_envio(fixture_id):
     fixture_str = str(fixture_id)
-    CACHE_MEMORIA_ALERTAS.add(fixture_str)
+    if not DATABASE_URL:
+        print("⚠️ DATABASE_URL não configurada para salvamento!")
+        return
     try:
-        os.makedirs(os.path.dirname(ARQUIVO_HISTORICO), exist_ok=True)
-        with open(ARQUIVO_HISTORICO, "a") as f:
-            f.write(f"{fixture_str}\n")
-            f.flush()
-        print(f"💾 Jogo {fixture_str} salvo no disco com sucesso!")
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO historico_alertas (fixture_id) VALUES (%s) ON CONFLICT (fixture_id) DO NOTHING;",
+            (fixture_str,)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"💾 Jogo {fixture_str} salvo no Supabase com sucesso!")
     except Exception as e:
-        print(f"❌ Erro ao salvar no disco: {e}")
+        print(f"❌ Erro ao salvar no PostgreSQL: {e}")
 
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -189,9 +207,8 @@ def rodar_varredura():
                                 f"🚩 Cantos: **{corners_alvo}**"
                             )
                             enviar_telegram(mensagem)
-                            print(f"✅ Alerta disparado: {home_name} vs {away_name}")
+                            print(f"✅ Alerta disparado e salvo no banco: {home_name} vs {away_name}")
                     else:
-                        # LOG DE DIAGNÓSTICO: Mostra exatamente o motivo de ter ficado de fora na faixa de tempo
                         print(f"🔍 [Quase-Padrão] {home_name} vs {away_name} ({elapsed}') | Alvo: {'Casa' if eh_mandante else 'Fora'} | Posse: {possession}% (Mín: 60%) | Chutes: {shots_alvo} vs {shots_adv} (Mín Chutes Alvo: {meta_chutes})")
                             
         except Exception as match_err:
@@ -199,9 +216,9 @@ def rodar_varredura():
             continue
 
 if __name__ == "__main__":
-    print("🤖 Robô com diagnóstico de logs ativado iniciado!")
-    inicializar_disco_e_cache()
-    enviar_telegram("🤖 *Robô de pressão HT (com diagnóstico nos logs) ligado!*")
+    print("🤖 Robô integrado com Supabase (PostgreSQL) iniciado!")
+    inicializar_banco()
+    enviar_telegram("🤖 *Robô de pressão HT (com PostgreSQL) ligado!*")
     
     while True:
         try:
