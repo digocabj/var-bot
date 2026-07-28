@@ -136,7 +136,7 @@ def rodar_varredura():
             away_id = match['teams']['away']['id']
             
             home_name = match['teams']['home']['name']
-            away_name = match['teams']['home']['name']
+            away_name = match['teams']['away']['name']
             
             alvo_id = None
             eh_mandante = True
@@ -188,6 +188,9 @@ def rodar_varredura():
             h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
             a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
             
+            h_corners = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+            a_corners = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+            
             h_att_perigosos = int(next((s['value'] for s in h_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
             a_att_perigosos = int(next((s['value'] for s in a_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
             
@@ -196,13 +199,15 @@ def rodar_varredura():
                 shots_alvo = h_shots
                 shots_adv = a_shots
                 att_perigosos_alvo = h_att_perigosos
-                corners_alvo = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+                corners_alvo = h_corners
+                corners_adv = a_corners
             else:
                 possession = a_poss
                 shots_alvo = a_shots
                 shots_adv = h_shots
                 att_perigosos_alvo = a_att_perigosos
-                corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+                corners_alvo = a_corners
+                corners_adv = h_corners
             
             if shots_adv == 0:
                 continue
@@ -210,7 +215,6 @@ def rodar_varredura():
             minuto_atual = max(elapsed, 1)
             taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
             
-            # Condições de Disparo Ajustadas
             if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
@@ -231,7 +235,7 @@ def rodar_varredura():
                     f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
                     f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
                     f"▫️ Posse de Bola: {possession}%\n"
-                    f"▫️ Escanteios do Alvo: {corners_alvo}\n"
+                    f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
                     f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
                     f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
                 )
@@ -251,5 +255,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"❌ Erro crítico: {e}")
         time.sleep(180)
-
 
