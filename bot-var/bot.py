@@ -26,7 +26,6 @@ def inicializar_banco():
                 minuto INT,
                 corners_ht INT,
                 posse_casa INT,
-                corners_fim_ht INT,
                 resultado_status VARCHAR(10),
                 data_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -78,12 +77,14 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
         print(f"❌ Erro ao salvar no PostgreSQL: {e}")
 
 def enviar_telegram(mensagem):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
+    url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "MarkdownV2"}
     try:
-        requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code != 200:
+            print(f"⚠️ Erro resposta Telegram: {response.text}")
     except Exception as e:
-        print(f"⚠️ Erro Telegram: {e}")
+        print(f"⚠️ Erro de conexão com Telegram: {e}")
 
 def carregar_ids_excel():
     try:
@@ -116,7 +117,7 @@ def rodar_varredura():
         print("⚠️ Planilha vazia ou não encontrada.")
         return
 
-    url = "https://v3.football.api-sports.io/fixtures"
+    url = "https://api-sports.io"
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
     
     try:
@@ -140,6 +141,7 @@ def rodar_varredura():
             alvo_id = None
             eh_mandante = True
             
+            # ✅ REATIVADO: Identifica dinamicamente quem é o time monitorado dominante
             if home_id in ids_monitorados:
                 alvo_id = home_id
                 eh_mandante = True
@@ -158,21 +160,22 @@ def rodar_varredura():
                 home_goals = match['goals']['home'] or 0
                 away_goals = match['goals']['away'] or 0
                 
+                # Validação de placar baseada em quem é o alvo de pressão
                 if eh_mandante and home_goals > away_goals:
                     continue
                 if not eh_mandante and away_goals > home_goals:
                     continue
                 
-                ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
+                ev_resp = requests.get(f"https://api-sports.io/events?fixture={fixture_id}", headers=headers, timeout=10)
                 tem_expulsao = any(
                     ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
                     for ev in ev_resp.json().get("response", [])
                 )
                 if tem_expulsao:
-                    print(f"🔍 [Diagnóstico] {home_name} vs {away_name} ignorado: Cartão vermelho para o time monitorado.")
+                    print(f"🔍 [Diagnóstico] {home_name} vs {away_name} ignorado: Cartão vermelho para o time alvo.")
                     continue
 
-                stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
+                stats_resp = requests.get(f"https://api-sports.io/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
                 stats = stats_resp.json().get('response', [])
                 
                 if stats and len(stats) >= 2:
@@ -185,54 +188,45 @@ def rodar_varredura():
                     h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
                     a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
                     
+                    h_att_perigosos = int(next((s['value'] for s in h_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
+                    a_att_perigosos = int(next((s['value'] for s in a_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
+                    
                     if eh_mandante:
                         possession = h_poss
                         shots_alvo = h_shots
                         shots_adv = a_shots
+                        att_perigosos_alvo = h_att_perigosos
                         corners_alvo = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                     else:
                         possession = a_poss
                         shots_alvo = a_shots
                         shots_adv = h_shots
+                        att_perigosos_alvo = a_att_perigosos
                         corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
                     
-                    # Validação rigorosa: Exige posse >= 60%, adversário com mais de 0 chutes, e proporção mínima de 1.7x
-                    if possession >= 60 and shots_adv > 0 and shots_alvo >= (shots_adv * 1.7):
-                        if not ja_foi_enviado(fixture_id):
-                            league_name = match['league']['name']
-                            match_name = f"{home_name} vs {away_name}"
-                            
-                            registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, possession)
-                            
-                            time_pressionando = home_name if eh_mandante else away_name
-                            
-                            mensagem = (
-                                f"🚨 **ALERTA DE PRESSÃO HT (1.7x)** 🚨\n\n"
-                                f"🏆 **Liga:** {league_name}\n"
-                                f"🏠 {home_name} vs {away_name} ⚽\n"
-                                f"🔥 **Pressionando:** {time_pressionando}\n"
-                                f"⏱ Minuto: **{elapsed}'** | Placar: **{home_goals}-{away_goals}**\n"
-                                f"📊 Posse ({time_pressionando}): **{possession}%**\n"
-                                f"🎯 Chutes: **{shots_alvo} vs {shots_adv}**\n"
-                                f"🚩 Cantos: **{corners_alvo}**"
-                            )
-                            enviar_telegram(mensagem)
-                            print(f"✅ Alerta disparado e salvo no banco: {home_name} vs {away_name}")
-                    else:
-                        print(f"🔍 [Quase-Padrão] {home_name} vs {away_name} ({elapsed}') | Posse: {possession}% | Chutes: {shots_alvo} vs {shots_adv}")
+                    minuto_atual = max(elapsed, 1)
+                    taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
+                    
+                    # Filtro calibrado do Ajuste Fino (Válido para Casa ou Fora)
+                    if possession >= 55 and shots_adv > 0 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
+                        league_name = match['league']['name']
+                        match_name = f"{home_name} vs {away_name}"
                         
-        except Exception as match_err:
-            print(f"⚠️ Erro ao processar partida: {match_err}")
-            continue
+                        def escape_md(text):
+                            for c in r"_*[]()~`>#+-=|{}.!":
+                                text = str(text).replace(c, f"\\{c}")
+                            return text
 
-if __name__ == "__main__":
-    print("🤖 Robô integrado com Supabase (PostgreSQL) iniciado!")
-    inicializar_banco()
-    enviar_telegram("🤖 *Robô de pressão HT (com PostgreSQL) ligado!*")
-    
-    while True:
-        try:
-            rodar_varredura()
-        except Exception as e:
-            print(f"❌ Erro crítico no loop principal: {e}")
-        time.sleep(180)
+                        # Identifica quem é o agressor tático na mensagem
+                        tipo_alvo = "Mandante" if eh_mandante else "Visitante"
+
+                        mensagem_alerta = (
+                            f"🚨 *Alerta de Padrão Detectado\!*\n\n"
+                            f"🏆 *Liga:* {escape_md(league_name)}\n"
+                            f"⚔️ *Jogo:* {escape_md(match_name)}\n"
+                            f"⏱️ *Minuto:* {elapsed}'\n\n"
+                            f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
+                            f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
+                            f"▫️ Posse de Bola: {possession}%\n"
+                            f"▫️ Escanteios do Alvo: {corners_alvo}\n"
+                            f"▫️ Chutes \(Alvo vs Adv\): {shots_alvo} vs {shots_adv}\n"
