@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 import psycopg2
 
-# Credenciais e tokens
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
@@ -53,7 +52,6 @@ def ja_foi_enviado(fixture_id):
         return False
 
 def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, posse_casa):
-    fixture_str = str(fixture_id)
     if not DATABASE_URL:
         print("⚠️ DATABASE_URL não configurada para salvamento!")
         return
@@ -67,7 +65,7 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
             VALUES (%s, %s, %s, %s, %s, %s) 
             ON CONFLICT (fixture_id) DO NOTHING;
             """,
-            (fixture_str, league_name, match_name, minuto, corners_ht, posse_casa)
+            (str(fixture_id), league_name, match_name, minuto, corners_ht, posse_casa)
         )
         conn.commit()
         cur.close()
@@ -217,7 +215,6 @@ def rodar_varredura():
                         tipo_alvo = "Mandante" if eh_mandante else "Visitante"
                         taxa_formatada = f"{taxa_ataque_perigoso:.2f}"
 
-                        # 🛠️ SOLUÇÃO DEFINITIVA: String linear única com quebras explícitas sem o uso de triplas aspas estruturais
                         mensagem_alerta = (
                             "🚨 *Alerta de Padrão Detectado\\!*\n\n"
                             f"🏆 *Liga:* {escape_md(league_name)}\n"
@@ -230,4 +227,7 @@ def rodar_varredura():
                             f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
                             f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
                         )
+                        
+                        enviar_telegram(mensagem_alerta)
+                        registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
 
