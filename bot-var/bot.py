@@ -72,7 +72,7 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
         conn.commit()
         cur.close()
         conn.close()
-        print(f"💾 Jogo {match_name} saved no Supabase com sucesso!")
+        print(f"💾 Jogo {match_name} salvo no Supabase com sucesso!")
     except Exception as e:
         print(f"❌ Erro ao salvar no PostgreSQL: {e}")
 
@@ -215,28 +215,19 @@ def rodar_varredura():
                             return text
 
                         tipo_alvo = "Mandante" if eh_mandante else "Visitante"
+                        taxa_formatada = f"{taxa_ataque_perigoso:.2f}"
 
-                        # 🛠️ CORREÇÃO CRÍTICA: r"" adicionado para evitar que o interpretador quebre com os caracteres de escape
-                        mensagem_alerta = rf"""🚨 *Alerta de Padrão Detectado\!*
-
-🏆 *Liga:* {escape_md(league_name)}
-⚔️ *Jogo:* {escape_md(match_name)}
-⏱️ *Minuto:* {elapsed}'
-
-🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_
-
-📊 *Métricas do Alvo ({tipo_alvo}):*
-▫️ Posse de Bola: {possession}%
-▫️ Escanteios do Alvo: {corners_alvo}
-▫️ Chutes \(Alvo vs Adv\): {shots_alvo} vs {shots_adv}
-▫️ Ataques Perigosos: {att_perigosos_alvo} \({taxa_ataque_perigoso:.2f}/min\)"""
-                        
-                        enviar_telegram(mensagem_alerta)
-                        registrar_envio(
-                            fixture_id=fixture_id,
-                            league_name=league_name,
-                            match_name=match_name,
-                            minuto=elapsed,
-                            corners_ht=corners_alvo,
-                            posse_casa=h_poss
+                        # 🛠️ SOLUÇÃO DEFINITIVA: String linear única com quebras explícitas sem o uso de triplas aspas estruturais
+                        mensagem_alerta = (
+                            "🚨 *Alerta de Padrão Detectado\\!*\n\n"
+                            f"🏆 *Liga:* {escape_md(league_name)}\n"
+                            f"⚔️ *Jogo:* {escape_md(match_name)}\n"
+                            f"⏱️ *Minuto:* {elapsed}'\n\n"
+                            f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
+                            f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
+                            f"▫️ Posse de Bola: {possession}%\n"
+                            f"▫️ Escanteios do Alvo: {corners_alvo}\n"
+                            f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
+                            f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
+                        )
 
