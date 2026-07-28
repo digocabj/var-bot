@@ -32,9 +32,9 @@ def inicializar_banco():
         conn.commit()
         cur.close()
         conn.close()
-        print("🗄️ Tabela PostgreSQL (Supabase) inicializada com sucesso!")
+        print("🗄️ Tabela PostgreSQL inicializada com sucesso!")
     except Exception as e:
-        print(f"❌ Erro ao inicializar banco de dados: {e}")
+        print(f"❌ Erro ao inicializar banco: {e}")
 
 def ja_foi_enviado(fixture_id):
     if not DATABASE_URL:
@@ -53,7 +53,6 @@ def ja_foi_enviado(fixture_id):
 
 def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, posse_casa):
     if not DATABASE_URL:
-        print("⚠️ DATABASE_URL não configurada para salvamento!")
         return
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -70,9 +69,9 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
         conn.commit()
         cur.close()
         conn.close()
-        print(f"💾 Jogo {match_name} salvo no Supabase com sucesso!")
+        print(f"💾 Jogo {match_name} salvo no banco!")
     except Exception as e:
-        print(f"❌ Erro ao salvar no PostgreSQL: {e}")
+        print(f"❌ Erro ao salvar no banco: {e}")
 
 def enviar_telegram(mensagem):
     url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -82,7 +81,7 @@ def enviar_telegram(mensagem):
         if response.status_code != 200:
             print(f"⚠️ Erro resposta Telegram: {response.text}")
     except Exception as e:
-        print(f"⚠️ Erro de conexão com Telegram: {e}")
+        print(f"⚠️ Erro de conexão Telegram: {e}")
 
 def carregar_ids_excel():
     try:
@@ -107,7 +106,7 @@ def rodar_varredura():
             permitido = True
 
     if not permitido:
-        print(f"💤 Fora do horário operacional ({agora_brasil.strftime('%d/%m %H:%M')} BR).")
+        print(f"💤 Fora do horário operacional.")
         return
 
     ids_monitorados = carregar_ids_excel()
@@ -125,7 +124,7 @@ def rodar_varredura():
         print(f"⚠️ Erro na API de fixtures: {e}")
         return
 
-    print(f"🔄 Varredura rodando... {len(dados)} jogos ao vivo no mundo.")
+    print(f"🔄 Varredura rodando... {len(dados)} jogos ao vivo.")
 
     for match in dados:
         try:
@@ -152,82 +151,101 @@ def rodar_varredura():
                 continue
 
             elapsed = match['fixture']['status']['elapsed']
+            if elapsed is None or elapsed < 20 or elapsed > 35:
+                continue
+
+            home_goals = match['goals']['home'] or 0
+            away_goals = match['goals']['away'] or 0
             
-            if elapsed is not None and 20 <= elapsed <= 35:
-                home_goals = match['goals']['home'] or 0
-                away_goals = match['goals']['away'] or 0
+            if eh_mandante and home_goals > away_goals:
+                continue
+            if not eh_mandante and away_goals > home_goals:
+                continue
+            
+            ev_resp = requests.get(f"https://api-sports.io/events?fixture={fixture_id}", headers=headers, timeout=10)
+            tem_expulsao = any(
+                ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
+                for ev in ev_resp.json().get("response", [])
+            )
+            if tem_expulsao:
+                continue
+
+            stats_resp = requests.get(f"https://api-sports.io/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
+            stats = stats_resp.json().get('response', [])
+            
+            if not stats or len(stats) < 2:
+                continue
+
+            h_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
+            a_stats = next((s['statistics'] for s in stats if s['team']['id'] != home_id), [])
+            
+            h_poss = int(str(next((s['value'] for s in h_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
+            a_poss = int(str(next((s['value'] for s in a_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
+            
+            h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
+            a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
+            
+            h_att_perigosos = int(next((s['value'] for s in h_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
+            a_att_perigosos = int(next((s['value'] for s in a_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
+            
+            if eh_mandante:
+                possession = h_poss
+                shots_alvo = h_shots
+                shots_adv = a_shots
+                att_perigosos_alvo = h_att_perigosos
+                corners_alvo = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+            else:
+                possession = a_poss
+                shots_alvo = a_shots
+                shots_adv = h_shots
+                att_perigosos_alvo = a_att_perigosos
+                corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+            
+            if shots_adv == 0:
+                continue
+
+            minuto_atual = max(elapsed, 1)
+            taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
+            
+            if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
+                league_name = match['league']['name']
+                match_name = f"{home_name} vs {away_name}"
                 
-                if eh_mandante and home_goals > away_goals:
-                    continue
-                if not eh_mandante and away_goals > home_goals:
-                    continue
-                
-                ev_resp = requests.get(f"https://api-sports.io/events?fixture={fixture_id}", headers=headers, timeout=10)
-                tem_expulsao = any(
-                    ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
-                    for ev in ev_resp.json().get("response", [])
+                def escape_md(text):
+                    for c in r"_*[]()~`>#+-=|{}.!":
+                        text = str(text).replace(c, f"\\{c}")
+                    return text
+
+                tipo_alvo = "Mandante" if eh_mandante else "Visitante"
+                taxa_formatada = f"{taxa_ataque_perigoso:.2f}"
+
+                mensagem_alerta = (
+                    "🚨 *Alerta de Padrão Detectado\\!*\n\n"
+                    f"🏆 *Liga:* {escape_md(league_name)}\n"
+                    f"⚔️ *Jogo:* {escape_md(match_name)}\n"
+                    f"⏱️ *Minuto:* {elapsed}'\n\n"
+                    f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
+                    f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
+                    f"▫️ Posse de Bola: {possession}%\n"
+                    f"▫️ Escanteios do Alvo: {corners_alvo}\n"
+                    f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
+                    f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
                 )
-                if tem_expulsao:
-                    print(f"🔍 [Diagnóstico] {home_name} vs {away_name} ignorado: Cartão vermelho para o time alvo.")
-                    continue
-
-                stats_resp = requests.get(f"https://api-sports.io/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
-                stats = stats_resp.json().get('response', [])
                 
-                if stats and len(stats) >= 2:
-                    h_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
-                    a_stats = next((s['statistics'] for s in stats if s['team']['id'] != home_id), [])
-                    
-                    h_poss = int(str(next((s['value'] for s in h_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-                    a_poss = int(str(next((s['value'] for s in a_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-                    
-                    h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
-                    a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
-                    
-                    h_att_perigosos = int(next((s['value'] for s in h_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
-                    a_att_perigosos = int(next((s['value'] for s in a_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
-                    
-                    if eh_mandante:
-                        possession = h_poss
-                        shots_alvo = h_shots
-                        shots_adv = a_shots
-                        att_perigosos_alvo = h_att_perigosos
-                        corners_alvo = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-                    else:
-                        possession = a_poss
-                        shots_alvo = a_shots
-                        shots_adv = h_shots
-                        att_perigosos_alvo = a_att_perigosos
-                        corners_alvo = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-                    
-                    minuto_atual = max(elapsed, 1)
-                    taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
-                    
-                    if possession >= 55 and shots_adv > 0 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
-                        league_name = match['league']['name']
-                        match_name = f"{home_name} vs {away_name}"
-                        
-                        def escape_md(text):
-                            for c in r"_*[]()~`>#+-=|{}.!":
-                                text = str(text).replace(c, f"\\{c}")
-                            return text
+                enviar_telegram(mensagem_alerta)
+                registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
+        except Exception as e:
+            print(f"⚠️ Erro no processamento de um jogo específico: {e}")
 
-                        tipo_alvo = "Mandante" if eh_mandante else "Visitante"
-                        taxa_formatada = f"{taxa_ataque_perigoso:.2f}"
+if __name__ == "__main__":
+    inicializar_banco()
+    enviar_telegram("🚀 *Robô inicializado com sucesso no Render\\!* Monitoramento ativo \\(Ciclo de 3 minutos\\)\\.")
+    print("🚀 Script iniciado!")
+    while True:
+        try:
+            rodar_varredura()
+        except Exception as e:
+            print(f"❌ Erro crítico: {e}")
+        time.sleep(180)
 
-                        mensagem_alerta = (
-                            "🚨 *Alerta de Padrão Detectado\\!*\n\n"
-                            f"🏆 *Liga:* {escape_md(league_name)}\n"
-                            f"⚔️ *Jogo:* {escape_md(match_name)}\n"
-                            f"⏱️ *Minuto:* {elapsed}'\n\n"
-                            f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
-                            f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
-                            f"▫️ Posse de Bola: {possession}%\n"
-                            f"▫️ Escanteios do Alvo: {corners_alvo}\n"
-                            f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
-                            f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
-                        )
-                        
-                        enviar_telegram(mensagem_alerta)
-                        registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
 
