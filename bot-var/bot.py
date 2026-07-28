@@ -74,7 +74,7 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
         print(f"❌ Erro ao salvar no banco: {e}")
 
 def enviar_telegram(mensagem):
-    url = f"https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "MarkdownV2"}
     try:
         response = requests.post(url, json=payload, timeout=10)
@@ -114,11 +114,14 @@ def rodar_varredura():
         print("⚠️ Planilha vazia ou não encontrada.")
         return
 
-    url = "https://api-sports.io"
+    url = "https://v3.football.api-sports.io/fixtures"
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
     
     try:
         response = requests.get(url, headers=headers, params={"live": "all"}, timeout=15)
+        if response.status_code != 200:
+            print(f"⚠️ Erro na API de fixtures: Status Code {response.status_code}")
+            return
         dados = response.json().get('response', [])
     except Exception as e:
         print(f"⚠️ Erro na API de fixtures: {e}")
@@ -133,7 +136,7 @@ def rodar_varredura():
             away_id = match['teams']['away']['id']
             
             home_name = match['teams']['home']['name']
-            away_name = match['teams']['away']['name']
+            away_name = match['teams']['home']['name']
             
             alvo_id = None
             eh_mandante = True
@@ -162,7 +165,7 @@ def rodar_varredura():
             if not eh_mandante and away_goals > home_goals:
                 continue
             
-            ev_resp = requests.get(f"https://api-sports.io/events?fixture={fixture_id}", headers=headers, timeout=10)
+            ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
             tem_expulsao = any(
                 ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
                 for ev in ev_resp.json().get("response", [])
@@ -170,7 +173,7 @@ def rodar_varredura():
             if tem_expulsao:
                 continue
 
-            stats_resp = requests.get(f"https://api-sports.io/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
+            stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
             stats = stats_resp.json().get('response', [])
             
             if not stats or len(stats) < 2:
@@ -207,6 +210,7 @@ def rodar_varredura():
             minuto_atual = max(elapsed, 1)
             taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
             
+            # Condições de Disparo Ajustadas
             if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
