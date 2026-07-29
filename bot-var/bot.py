@@ -85,10 +85,13 @@ def enviar_telegram(mensagem):
 
 def carregar_ids_excel():
     try:
+        # ATENÇÃO: Certifique-se de que este arquivo Excel foi enviado para o repositório no GitHub!
         df = pd.read_excel("sua_lista_de_times.xlsx")
-        return df['api_football_id'].dropna().astype(int).tolist()
+        ids = df['api_football_id'].dropna().astype(int).tolist()
+        print(f"📋 {len(ids)} IDs carregados da planilha.")
+        return ids
     except Exception as e:
-        print(f"⚠️ Erro ao carregar planilha: {e}")
+        print(f"⚠️ Erro ao carregar planilha (O arquivo 'sua_lista_de_times.xlsx' está no GitHub?): {e}")
         return []
 
 def rodar_varredura():
@@ -106,12 +109,12 @@ def rodar_varredura():
             permitido = True
 
     if not permitido:
-        print(f"💤 Fora do horário operacional.")
+        print(f"💤 Fora do horário operacional (Dia: {dia_semana}, Hora: {hora_atual}h).")
         return
 
     ids_monitorados = carregar_ids_excel()
     if not ids_monitorados:
-        print("⚠️ Planilha vazia ou não encontrada.")
+        print("⚠️ Planilha vazia ou não encontrada. Nenhum time para monitorar.")
         return
 
     url = "https://v3.football.api-sports.io/fixtures"
@@ -127,7 +130,7 @@ def rodar_varredura():
         print(f"⚠️ Erro na API de fixtures: {e}")
         return
 
-    print(f"🔄 Varredura rodando... {len(dados)} jogos ao vivo.")
+    print(f"🔄 Varredura rodando... {len(dados)} jogos ao vivo encontrados na API.")
 
     for match in dados:
         try:
@@ -148,21 +151,26 @@ def rodar_varredura():
                 alvo_id = away_id
                 eh_mandante = False
             else:
+                # Time não está na sua lista de monitorados
                 continue
 
             if ja_foi_enviado(fixture_id):
+                print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta enviado anteriormente.")
                 continue
 
             elapsed = match['fixture']['status']['elapsed']
             if elapsed is None or elapsed < 20 or elapsed > 35:
+                print(f"⏱️ [IGNORADO] {home_name} vs {away_name} fora da janela de minutos ({elapsed}').")
                 continue
 
             home_goals = match['goals']['home'] or 0
             away_goals = match['goals']['away'] or 0
             
             if eh_mandante and home_goals > away_goals:
+                print(f"⚽ [IGNORADO] {home_name} vs {away_name}: Time alvo (mandante) está vencendo ({home_goals}x{away_goals}).")
                 continue
             if not eh_mandante and away_goals > home_goals:
+                print(f"⚽ [IGNORADO] {home_name} vs {away_name}: Time alvo (visitante) está vencendo ({home_goals}x{away_goals}).")
                 continue
             
             ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
@@ -171,12 +179,14 @@ def rodar_varredura():
                 for ev in ev_resp.json().get("response", [])
             )
             if tem_expulsao:
+                print(f"🟥 [IGNORADO] {home_name} vs {away_name}: Time alvo tem jogador expulso.")
                 continue
 
             stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
             stats = stats_resp.json().get('response', [])
             
             if not stats or len(stats) < 2:
+                print(f"📊 [IGNORADO] {home_name} vs {away_name}: Estatísticas ainda indisponíveis na API.")
                 continue
 
             h_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
@@ -210,11 +220,15 @@ def rodar_varredura():
                 corners_adv = h_corners
             
             if shots_adv == 0:
+                print(f"📐 [IGNORADO] {home_name} vs {away_name}: Adversário com 0 chutes cadastrados.")
                 continue
 
             minuto_atual = max(elapsed, 1)
             taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
             
+            # TESTE DOS CRITÉRIOS FINAIS
+            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} (Req >= {shots_adv * 1.7}) | Taxa AP={taxa_ataque_perigoso:.2f} (Req >= 1.0)")
+
             if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
@@ -242,6 +256,8 @@ def rodar_varredura():
                 
                 enviar_telegram(mensagem_alerta)
                 registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
+            else:
+                print(f"❌ [DESCARTADO POR FILTRO] {home_name} vs {away_name} não bateu as métricas exigidas.")
         except Exception as e:
             print(f"⚠️ Erro no processamento de um jogo específico: {e}")
 
@@ -255,4 +271,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"❌ Erro crítico: {e}")
         time.sleep(180)
-
