@@ -85,13 +85,12 @@ def enviar_telegram(mensagem):
 
 def carregar_ids_excel():
     try:
-        # ATENÇÃO: Certifique-se de que este arquivo Excel foi enviado para o repositório no GitHub!
         df = pd.read_excel("sua_lista_de_times.xlsx")
         ids = df['api_football_id'].dropna().astype(int).tolist()
         print(f"📋 {len(ids)} IDs carregados da planilha.")
         return ids
     except Exception as e:
-        print(f"⚠️ Erro ao carregar planilha (O arquivo 'sua_lista_de_times.xlsx' está no GitHub?): {e}")
+        print(f"⚠️ Erro ao carregar planilha: {e}")
         return []
 
 def rodar_varredura():
@@ -151,7 +150,6 @@ def rodar_varredura():
                 alvo_id = away_id
                 eh_mandante = False
             else:
-                # Time não está na sua lista de monitorados
                 continue
 
             if ja_foi_enviado(fixture_id):
@@ -226,10 +224,9 @@ def rodar_varredura():
             minuto_atual = max(elapsed, 1)
             taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
             
-            # TESTE DOS CRITÉRIOS FINAIS
-            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} (Req >= {shots_adv * 1.7}) | Taxa AP={taxa_ataque_perigoso:.2f} (Req >= 1.0)")
+            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} (Req >= {shots_adv * 1.7}) | Taxa AP={taxa_ataque_perigoso:.2f} (Req >= 0.66)")
 
-            if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 1.0:
+            if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 0.66:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
                 
