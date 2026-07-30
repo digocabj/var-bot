@@ -181,10 +181,13 @@ def rodar_varredura():
                 continue
 
             stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
-            stats = stats_resp.json().get('response', [])
+            stats_data = stats_resp.json()
+            stats = stats_data.get('response', [])
             
             if not stats or len(stats) < 2:
-                print(f"📊 [IGNORADO] {home_name} vs {away_name}: Estatísticas ainda indisponíveis na API.")
+                print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
+                print(f"📦 Resposta completa da API: {stats_resp.text}")
+                print(f"📊 [IGNORADO] {home_name} vs {away_name}: Estatísticas ainda indisponíveis na API.\n")
                 continue
 
             h_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
@@ -217,10 +220,6 @@ def rodar_varredura():
                 corners_alvo = a_corners
                 corners_adv = h_corners
             
-            if shots_adv == 0:
-                print(f"📐 [IGNORADO] {home_name} vs {away_name}: Adversário com 0 chutes cadastrados.")
-                continue
-
             minuto_atual = max(elapsed, 1)
             taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
             
