@@ -104,7 +104,7 @@ def rodar_varredura():
         if hora_atual >= 12:
             permitido = True
     else:
-        if not (1 <= hora_atual <= 8):
+        if not (1 <= hora_atual <= 7):
             permitido = True
 
     if not permitido:
@@ -157,7 +157,7 @@ def rodar_varredura():
                 continue
 
             elapsed = match['fixture']['status']['elapsed']
-            if elapsed is None or elapsed < 20 or elapsed > 35:
+            if elapsed is None or elapsed < 20 or elapsed > 37:
                 print(f"⏱️ [IGNORADO] {home_name} vs {away_name} fora da janela de minutos ({elapsed}').")
                 continue
 
@@ -186,7 +186,6 @@ def rodar_varredura():
             
             if not stats or len(stats) < 2:
                 print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
-                print(f"📦 Resposta completa da API: {stats_resp.text}")
                 print(f"📊 [IGNORADO] {home_name} vs {away_name}: Estatísticas ainda indisponíveis na API.\n")
                 continue
 
@@ -202,30 +201,23 @@ def rodar_varredura():
             h_corners = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
             a_corners = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
             
-            h_att_perigosos = int(next((s['value'] for s in h_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
-            a_att_perigosos = int(next((s['value'] for s in a_stats if s['type'] == 'Dangerous Attacks'), 0) or 0)
-            
             if eh_mandante:
                 possession = h_poss
                 shots_alvo = h_shots
                 shots_adv = a_shots
-                att_perigosos_alvo = h_att_perigosos
                 corners_alvo = h_corners
                 corners_adv = a_corners
             else:
                 possession = a_poss
                 shots_alvo = a_shots
                 shots_adv = h_shots
-                att_perigosos_alvo = a_att_perigosos
                 corners_alvo = a_corners
                 corners_adv = h_corners
             
-            minuto_atual = max(elapsed, 1)
-            taxa_ataque_perigoso = att_perigosos_alvo / minuto_atual
-            
-            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} (Req >= {shots_adv * 1.7}) | Taxa AP={taxa_ataque_perigoso:.2f} (Req >= 0.66)")
+            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} | Escanteios={corners_alvo}")
 
-            if possession >= 55 and shots_alvo >= (shots_adv * 1.7) and taxa_ataque_perigoso >= 0.66:
+            # FILTRO CORRIGIDO: Retirado o corners_alvo >= 1
+            if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
                 
@@ -235,7 +227,6 @@ def rodar_varredura():
                     return text
 
                 tipo_alvo = "Mandante" if eh_mandante else "Visitante"
-                taxa_formatada = f"{taxa_ataque_perigoso:.2f}"
 
                 mensagem_alerta = (
                     "🚨 *Alerta de Padrão Detectado\\!*\n\n"
@@ -246,8 +237,7 @@ def rodar_varredura():
                     f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
                     f"▫️ Posse de Bola: {possession}%\n"
                     f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
-                    f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}\n"
-                    f"▫️ Ataques Perigosos: {att_perigosos_alvo} \\({taxa_formatada}/min\\)"
+                    f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}"
                 )
                 
                 enviar_telegram(mensagem_alerta)
