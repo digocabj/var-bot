@@ -57,12 +57,12 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
+        # CORREÇÃO 1: Removido o ON CONFLICT para evitar erro de constraint no banco
         cur.execute(
             """
             INSERT INTO historico_alertas 
             (fixture_id, league_name, match_name, minuto, corners_ht, posse_casa) 
-            VALUES (%s, %s, %s, %s, %s, %s) 
-            ON CONFLICT (fixture_id) DO NOTHING;
+            VALUES (%s, %s, %s, %s, %s, %s);
             """,
             (str(fixture_id), league_name, match_name, minuto, corners_ht, posse_casa)
         )
@@ -216,7 +216,6 @@ def rodar_varredura():
             
             print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} | Escanteios={corners_alvo}")
 
-            # FILTRO CORRIGIDO: Retirado o corners_alvo >= 1
             if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
                 league_name = match['league']['name']
                 match_name = f"{home_name} vs {away_name}"
@@ -228,13 +227,14 @@ def rodar_varredura():
 
                 tipo_alvo = "Mandante" if eh_mandante else "Visitante"
 
+                # CORREÇÃO 2: Adicionadas as barras de escape \\( e \\) em volta de {tipo_alvo}
                 mensagem_alerta = (
                     "🚨 *Alerta de Padrão Detectado\\!*\n\n"
                     f"🏆 *Liga:* {escape_md(league_name)}\n"
                     f"⚔️ *Jogo:* {escape_md(match_name)}\n"
                     f"⏱️ *Minuto:* {elapsed}'\n\n"
                     f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
-                    f"📊 *Métricas do Alvo ({tipo_alvo}):*\n"
+                    f"📊 *Métricas do Alvo \\({tipo_alvo}\\):*\n"
                     f"▫️ Posse de Bola: {possession}%\n"
                     f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
                     f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}"
