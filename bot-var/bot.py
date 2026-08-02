@@ -57,7 +57,6 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-        # CORREÇÃO 1: Removido o ON CONFLICT para evitar erro de constraint no banco
         cur.execute(
             """
             INSERT INTO historico_alertas 
@@ -136,24 +135,21 @@ def rodar_varredura():
             fixture_id = str(match['fixture']['id'])
             home_id = match['teams']['home']['id']
             away_id = match['teams']['away']['id']
-            
             home_name = match['teams']['home']['name']
             away_name = match['teams']['away']['name']
             
-            alvo_id = None
-            eh_mandante = True
-            
+            # --- NOVA LÓGICA: IDENTIFICA SE 1 OU OS 2 TIMES ESTÃO NA LISTA ---
+            alvos_na_partida = []
             if home_id in ids_monitorados:
-                alvo_id = home_id
-                eh_mandante = True
-            elif away_id in ids_monitorados:
-                alvo_id = away_id
-                eh_mandante = False
-            else:
+                alvos_na_partida.append({"id": home_id, "eh_mandante": True, "nome": home_name})
+            if away_id in ids_monitorados:
+                alvos_na_partida.append({"id": away_id, "eh_mandante": False, "nome": away_name})
+
+            if not alvos_na_partida:
                 continue
 
             if ja_foi_enviado(fixture_id):
-                print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta enviado anteriormente.")
+                print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta enviado.")
                 continue
 
             elapsed = match['fixture']['status']['elapsed']
@@ -161,89 +157,104 @@ def rodar_varredura():
                 print(f"⏱️ [IGNORADO] {home_name} vs {away_name} fora da janela de minutos ({elapsed}').")
                 continue
 
-            home_goals = match['goals']['home'] or 0
-            away_goals = match['goals']['away'] or 0
-            
-            if eh_mandante and home_goals > away_goals:
-                print(f"⚽ [IGNORADO] {home_name} vs {away_name}: Time alvo (mandante) está vencendo ({home_goals}x{away_goals}).")
-                continue
-            if not eh_mandante and away_goals > home_goals:
-                print(f"⚽ [IGNORADO] {home_name} vs {away_name}: Time alvo (visitante) está vencendo ({home_goals}x{away_goals}).")
-                continue
-            
-            ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
-            tem_expulsao = any(
-                ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
-                for ev in ev_resp.json().get("response", [])
-            )
-            if tem_expulsao:
-                print(f"🟥 [IGNORADO] {home_name} vs {away_name}: Time alvo tem jogador expulso.")
-                continue
+            # Variáveis para garantir que a API seja chamada SÓ UMA VEZ por jogo, mesmo se tiver 2 alvos
+            eventos_api = None
+            stats_api = None
 
-            stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
-            stats_data = stats_resp.json()
-            stats = stats_data.get('response', [])
-            
-            if not stats or len(stats) < 2:
-                print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
-                print(f"📊 [IGNORADO] {home_name} vs {away_name}: Estatísticas ainda indisponíveis na API.\n")
-                continue
+            # Testa cada alvo que estiver na planilha dentro deste jogo
+            for alvo in alvos_na_partida:
+                alvo_id = alvo["id"]
+                eh_mandante = alvo["eh_mandante"]
+                nome_alvo = alvo["nome"]
+                tipo_alvo_str = "Mandante" if eh_mandante else "Visitante"
 
-            h_stats = next((s['statistics'] for s in stats if s['team']['id'] == home_id), [])
-            a_stats = next((s['statistics'] for s in stats if s['team']['id'] != home_id), [])
-            
-            h_poss = int(str(next((s['value'] for s in h_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-            a_poss = int(str(next((s['value'] for s in a_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-            
-            h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
-            a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
-            
-            h_corners = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-            a_corners = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-            
-            if eh_mandante:
-                possession = h_poss
-                shots_alvo = h_shots
-                shots_adv = a_shots
-                corners_alvo = h_corners
-                corners_adv = a_corners
-            else:
-                possession = a_poss
-                shots_alvo = a_shots
-                shots_adv = h_shots
-                corners_alvo = a_corners
-                corners_adv = h_corners
-            
-            print(f"🔎 Avaliando {home_name} vs {away_name} (Min {elapsed}'): Posse={possession}% (Req >= 55) | Chutes={shots_alvo} vs {shots_adv} | Escanteios={corners_alvo}")
-
-            if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
-                league_name = match['league']['name']
-                match_name = f"{home_name} vs {away_name}"
+                home_goals = match['goals']['home'] or 0
+                away_goals = match['goals']['away'] or 0
                 
-                def escape_md(text):
-                    for c in r"_*[]()~`>#+-=|{}.!":
-                        text = str(text).replace(c, f"\\{c}")
-                    return text
-
-                tipo_alvo = "Mandante" if eh_mandante else "Visitante"
-
-                # CORREÇÃO 2: Adicionadas as barras de escape \\( e \\) em volta de {tipo_alvo}
-                mensagem_alerta = (
-                    "🚨 *Alerta de Padrão Detectado\\!*\n\n"
-                    f"🏆 *Liga:* {escape_md(league_name)}\n"
-                    f"⚔️ *Jogo:* {escape_md(match_name)}\n"
-                    f"⏱️ *Minuto:* {elapsed}'\n\n"
-                    f"🔥 *🔥 TIME DOMINANTE:* _{tipo_alvo}_\n\n"
-                    f"📊 *Métricas do Alvo \\({tipo_alvo}\\):*\n"
-                    f"▫️ Posse de Bola: {possession}%\n"
-                    f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
-                    f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}"
+                if eh_mandante and home_goals > away_goals:
+                    print(f"⚽ [IGNORADO] {nome_alvo} ({tipo_alvo_str}) está vencendo o jogo.")
+                    continue
+                if not eh_mandante and away_goals > home_goals:
+                    print(f"⚽ [IGNORADO] {nome_alvo} ({tipo_alvo_str}) está vencendo o jogo.")
+                    continue
+                
+                # Puxa eventos (Cartão Vermelho) apenas se ainda não puxou
+                if eventos_api is None:
+                    ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
+                    eventos_api = ev_resp.json().get("response", [])
+                    
+                tem_expulsao = any(
+                    ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
+                    for ev in eventos_api
                 )
+                if tem_expulsao:
+                    print(f"🟥 [IGNORADO] {nome_alvo} ({tipo_alvo_str}) tem jogador expulso.")
+                    continue
+
+                # Puxa Estatísticas apenas se ainda não puxou
+                if stats_api is None:
+                    stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
+                    stats_api = stats_resp.json().get('response', [])
                 
-                enviar_telegram(mensagem_alerta)
-                registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
-            else:
-                print(f"❌ [DESCARTADO POR FILTRO] {home_name} vs {away_name} não bateu as métricas exigidas.")
+                if not stats_api or len(stats_api) < 2:
+                    print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
+                    print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis na API.\n")
+                    break # Sem stats, interrompe a checagem dos dois times
+
+                h_stats = next((s['statistics'] for s in stats_api if s['team']['id'] == home_id), [])
+                a_stats = next((s['statistics'] for s in stats_api if s['team']['id'] != home_id), [])
+                
+                h_poss = int(str(next((s['value'] for s in h_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
+                a_poss = int(str(next((s['value'] for s in a_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
+                
+                h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
+                a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
+                
+                h_corners = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+                a_corners = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
+                
+                if eh_mandante:
+                    possession = h_poss
+                    shots_alvo = h_shots
+                    shots_adv = a_shots
+                    corners_alvo = h_corners
+                    corners_adv = a_corners
+                else:
+                    possession = a_poss
+                    shots_alvo = a_shots
+                    shots_adv = h_shots
+                    corners_alvo = a_corners
+                    corners_adv = h_corners
+                
+                print(f"🔎 Avaliando {nome_alvo} ({tipo_alvo_str}) (Min {elapsed}'): Posse={possession}% | Chutes={shots_alvo} vs {shots_adv} | Escanteios={corners_alvo}")
+
+                if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
+                    league_name = match['league']['name']
+                    match_name = f"{home_name} vs {away_name}"
+                    
+                    def escape_md(text):
+                        for c in r"_*[]()~`>#+-=|{}.!":
+                            text = str(text).replace(c, f"\\{c}")
+                        return text
+
+                    mensagem_alerta = (
+                        "🚨 *Alerta de Padrão Detectado\\!*\n\n"
+                        f"🏆 *Liga:* {escape_md(league_name)}\n"
+                        f"⚔️ *Jogo:* {escape_md(match_name)}\n"
+                        f"⏱️ *Minuto:* {elapsed}'\n\n"
+                        f"🔥 *TIME DOMINANTE:* _{escape_md(nome_alvo)} \\({tipo_alvo_str}\\)_\n\n"
+                        f"📊 *Métricas do Alvo:*\n"
+                        f"▫️ Posse de Bola: {possession}%\n"
+                        f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
+                        f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}"
+                    )
+                    
+                    enviar_telegram(mensagem_alerta)
+                    registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
+                    break # Se já enviou o alerta por causa de um time, para o loop (não manda duplo)
+                else:
+                    print(f"❌ [DESCARTADO] {nome_alvo} não bateu as métricas exigidas.")
+                    
         except Exception as e:
             print(f"⚠️ Erro no processamento de um jogo específico: {e}")
 
