@@ -6,7 +6,7 @@ import pandas as pd
 import psycopg2
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
-# Canal Principal (onde chegam os alertas "LIBERTEM O KRAKEN")
+# Canal Principal (onde chegam as entradas "LIBERTEM O KRAKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
 # Canal Secundário (apenas para avisar que o jogo começou / está sob monitoramento)
 TELEGRAM_CHAT_ID_MONITORAMENTO = os.getenv("TELEGRAM_CHAT_ID_MONITORAMENTO", "SEU_ID_DO_CANAL_SECUNDARIO_AQUI")
@@ -105,6 +105,43 @@ def escape_md(text):
         text = str(text).replace(c, f"\\{c}")
     return text
 
+def extrair_valor_stat(stats_list, stat_type):
+    if not stats_list:
+        return None
+    for item in stats_list:
+        if item.get('type') == stat_type:
+            val = item.get('value')
+            if val is None:
+                return None
+            if isinstance(val, str):
+                val = val.replace('%', '').strip()
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
+    return None
+
+def validar_estatisticas(stats_api, home_id):
+    if not stats_api or not isinstance(stats_api, list) or len(stats_api) < 2:
+        return False, None, None
+    
+    h_stats = next((s.get('statistics') for s in stats_api if s.get('team', {}).get('id') == home_id), None)
+    a_stats = next((s.get('statistics') for s in stats_api if s.get('team', {}).get('id') != home_id), None)
+
+    if not h_stats or not a_stats:
+        return False, None, None
+
+    # Garante que Posse e Chutes existem e não são nulos na API
+    h_poss = extrair_valor_stat(h_stats, 'Ball Possession')
+    a_poss = extrair_valor_stat(a_stats, 'Ball Possession')
+    h_shots = extrair_valor_stat(h_stats, 'Total Shots')
+    a_shots = extrair_valor_stat(a_stats, 'Total Shots')
+
+    if h_poss is None or a_poss is None or h_shots is None or a_shots is None:
+        return False, None, None
+
+    return True, h_stats, a_stats
+
 def rodar_varredura():
     fuso_brasil = timezone(timedelta(hours=-3))
     agora_brasil = datetime.now(fuso_brasil)
@@ -162,20 +199,32 @@ def rodar_varredura():
             if not alvos_na_partida:
                 continue
 
-            # --- AVISO DE JOGO EM MONITORAMENTO (CANAL SECUNDÁRIO) ---
+            # --- CONSULTA E VALIDAÇÃO DE ESTATÍSTICAS ANTES DE QUALQUER ALERTA ---
+            stats_resp = requests.get(
+                "https://v3.football.api-sports.io/fixtures/statistics",
+                headers=headers,
+                params={"fixture": fixture_id},
+                timeout=10
+            )
+            stats_api = stats_resp.json().get('response', [])
+
+            tem_stats_validas, h_stats, a_stats = validar_estatisticas(stats_api, home_id)
+
+            if not tem_stats_validas:
+                print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis/incompletas na API: {home_name} vs {away_name}")
+                continue
+
+            # --- AVISO DE JOGO EM MONITORAMENTO (DISPARA APENAS SE TIVER ESTATÍSTICAS VÁLIDAS) ---
             if fixture_id not in jogos_notificados_inicio:
-                times_alvo_str = " & ".join([a["nome"] for a in alvos_na_partida])
                 msg_monitoramento = (
                     "👀 *JOGO EM MONITORAMENTO* 👀\n\n"
                     f"🏆 {escape_md(league_name)}\n"
-                    f"⚔️ *{escape_md(home_name)} vs {escape_md(away_name)}*\n\n"
-                    f"📌 *Time\\(s\\) da lista:* {escape_md(times_alvo_str)}\n"
-                    f"⏱️ O robô está analisando as estatísticas em tempo real\\."
+                    f"⚔️ *{escape_md(home_name)} vs {escape_md(away_name)}*"
                 )
                 enviar_telegram(msg_monitoramento, target_chat_id=TELEGRAM_CHAT_ID_MONITORAMENTO)
                 jogos_notificados_inicio.add(fixture_id)
 
-            # --- CHECAGEM DE CRITÉRIOS DE ENTRADA ---
+            # --- CHECAGEM DE CRITÉRIOS DE ENTRADA (KRAKEN) ---
             if ja_foi_enviado(fixture_id):
                 print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta de entrada enviado.")
                 continue
@@ -185,8 +234,13 @@ def rodar_varredura():
                 print(f"⏱️ [IGNORADO] {home_name} vs {away_name} fora da janela de minutos ({elapsed}').")
                 continue
 
-            eventos_api = None
-            stats_api = None
+            # Eventos (expulsões)
+            ev_resp = requests.get(
+                f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}",
+                headers=headers,
+                timeout=10
+            )
+            eventos_api = ev_resp.json().get("response", [])
 
             for alvo in alvos_na_partida:
                 alvo_id = alvo["id"]
@@ -204,10 +258,6 @@ def rodar_varredura():
                     print(f"⚽ [IGNORADO] {nome_alvo} ({tipo_alvo_str}) está vencendo o jogo.")
                     continue
                 
-                if eventos_api is None:
-                    ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
-                    eventos_api = ev_resp.json().get("response", [])
-                    
                 tem_expulsao = any(
                     ev.get("team", {}).get("id") == alvo_id and ev.get("type") == "Card" and "Red" in ev.get("detail", "")
                     for ev in eventos_api
@@ -216,27 +266,13 @@ def rodar_varredura():
                     print(f"🟥 [IGNORADO] {nome_alvo} ({tipo_alvo_str}) tem jogador expulso.")
                     continue
 
-                if stats_api is None:
-                    stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
-                    stats_api = stats_resp.json().get('response', [])
-                
-                if not stats_api or len(stats_api) < 2:
-                    print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
-                    print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis na API.\n")
-                    break
+                h_poss = extrair_valor_stat(h_stats, 'Ball Possession') or 0
+                a_poss = extrair_valor_stat(a_stats, 'Ball Possession') or 0
+                h_shots = extrair_valor_stat(h_stats, 'Total Shots') or 0
+                a_shots = extrair_valor_stat(a_stats, 'Total Shots') or 0
+                h_corners = extrair_valor_stat(h_stats, 'Corner Kicks') or 0
+                a_corners = extrair_valor_stat(a_stats, 'Corner Kicks') or 0
 
-                h_stats = next((s['statistics'] for s in stats_api if s['team']['id'] == home_id), [])
-                a_stats = next((s['statistics'] for s in stats_api if s['team']['id'] != home_id), [])
-                
-                h_poss = int(str(next((s['value'] for s in h_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-                a_poss = int(str(next((s['value'] for s in a_stats if s['type'] == 'Ball Possession'), '0')).replace('%', ''))
-                
-                h_shots = int(next((s['value'] for s in h_stats if s['type'] == 'Total Shots'), 0) or 0)
-                a_shots = int(next((s['value'] for s in a_stats if s['type'] == 'Total Shots'), 0) or 0)
-                
-                h_corners = int(next((s['value'] for s in h_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-                a_corners = int(next((s['value'] for s in a_stats if s['type'] == 'Corner Kicks'), 0) or 0)
-                
                 if eh_mandante:
                     possession = h_poss
                     shots_alvo = h_shots
@@ -255,6 +291,7 @@ def rodar_varredura():
                 if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
                     match_name = f"{home_name} vs {away_name}"
 
+                    # --- ALERTA PRINCIPAL DO KRAKEN (FORMATO COMPLETO) ---
                     mensagem_alerta = (
                         "🏴‍☠️ *LIBERTEM O KRAKEN\\!* 🏴‍☠️\n\n"
                         f"🏆 {escape_md(league_name)}\n"
@@ -265,7 +302,6 @@ def rodar_varredura():
                         f"▫️ Chutes: {shots_alvo} vs {shots_adv}"
                     )
                     
-                    # Envia o alerta principal para o TELEGRAM_CHAT_ID padrão
                     enviar_telegram(mensagem_alerta)
                     registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
                     break
