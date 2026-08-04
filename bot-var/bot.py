@@ -214,12 +214,14 @@ def rodar_varredura():
                 print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis/incompletas na API: {home_name} vs {away_name}")
                 continue
 
-            # --- AVISO DE JOGO EM MONITORAMENTO (CANAL SECUNDÁRIO) ---
+            # --- AVISO DE JOGO EM MONITORAMENTO (CANAL SECUNDÁRIO COM PONTILHADO DOURADO) ---
             if fixture_id not in jogos_notificados_inicio:
+                linha_dourada = "🔸 🔸 🔸 🔸 🔸 🔸 🔸 🔸 🔸 🔸"
                 msg_monitoramento = (
                     "🚩 *JOGO EM MONITORAMENTO* 🚩\n\n"
                     f"🏆 {escape_md(league_name)}\n"
-                    f"⚔️ *{escape_md(home_name.upper())} vs {escape_md(away_name.upper())}*"
+                    f"⚔️ *{escape_md(home_name.upper())} vs {escape_md(away_name.upper())}*\n\n"
+                    f"{linha_dourada}"
                 )
                 enviar_telegram(msg_monitoramento, target_chat_id=TELEGRAM_CHAT_ID_MONITORAMENTO)
                 jogos_notificados_inicio.add(fixture_id)
