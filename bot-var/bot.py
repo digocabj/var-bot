@@ -214,12 +214,12 @@ def rodar_varredura():
                 print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis/incompletas na API: {home_name} vs {away_name}")
                 continue
 
-            # --- AVISO DE JOGO EM MONITORAMENTO (DISPARA APENAS SE TIVER ESTATÍSTICAS VÁLIDAS) ---
+            # --- AVISO DE JOGO EM MONITORAMENTO (CANAL SECUNDÁRIO) ---
             if fixture_id not in jogos_notificados_inicio:
                 msg_monitoramento = (
-                    "👀 *JOGO EM MONITORAMENTO* 👀\n\n"
+                    "🚩 *JOGO EM MONITORAMENTO* 🚩\n\n"
                     f"🏆 {escape_md(league_name)}\n"
-                    f"⚔️ *{escape_md(home_name)} vs {escape_md(away_name)}*"
+                    f"⚔️ *{escape_md(home_name.upper())} vs {escape_md(away_name.upper())}*"
                 )
                 enviar_telegram(msg_monitoramento, target_chat_id=TELEGRAM_CHAT_ID_MONITORAMENTO)
                 jogos_notificados_inicio.add(fixture_id)
@@ -291,7 +291,7 @@ def rodar_varredura():
                 if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
                     match_name = f"{home_name} vs {away_name}"
 
-                    # --- ALERTA PRINCIPAL DO KRAKEN (FORMATO COMPLETO) ---
+                    # --- ALERTA PRINCIPAL DO KRAKEN (CANAL PRINCIPAL) ---
                     mensagem_alerta = (
                         "🏴‍☠️ *LIBERTEM O KRAKEN\\!* 🏴‍☠️\n\n"
                         f"🏆 {escape_md(league_name)}\n"
