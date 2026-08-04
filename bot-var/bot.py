@@ -6,9 +6,16 @@ import pandas as pd
 import psycopg2
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8690129888:AAH16QSPrjZD_x43ikd-vt_Psrt9937RHRI")
+# Canal Principal (onde chegam os alertas "LIBERTEM O KRAKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "675279616")
+# Canal Secundário (apenas para avisar que o jogo começou / está sob monitoramento)
+TELEGRAM_CHAT_ID_MONITORAMENTO = os.getenv("TELEGRAM_CHAT_ID_MONITORAMENTO", "SEU_ID_DO_CANAL_SECUNDARIO_AQUI")
+
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "80ad3bfb17e12e4244133f4d13b13cea")
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Memória temporária para não repetir aviso de "jogo iniciado" a cada 3 minutos
+jogos_notificados_inicio = set()
 
 def inicializar_banco():
     if not DATABASE_URL:
@@ -72,13 +79,14 @@ def registrar_envio(fixture_id, league_name, match_name, minuto, corners_ht, pos
     except Exception as e:
         print(f"❌ Erro ao salvar no banco: {e}")
 
-def enviar_telegram(mensagem):
+def enviar_telegram(mensagem, target_chat_id=None):
+    destination = target_chat_id or TELEGRAM_CHAT_ID
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "MarkdownV2"}
+    payload = {"chat_id": destination, "text": mensagem, "parse_mode": "MarkdownV2"}
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code != 200:
-            print(f"⚠️ Erro resposta Telegram: {response.text}")
+            print(f"⚠️ Erro resposta Telegram ({destination}): {response.text}")
     except Exception as e:
         print(f"⚠️ Erro de conexão Telegram: {e}")
 
@@ -91,6 +99,11 @@ def carregar_ids_excel():
     except Exception as e:
         print(f"⚠️ Erro ao carregar planilha: {e}")
         return []
+
+def escape_md(text):
+    for c in r"_*[]()~`>#+-=|{}.!":
+        text = str(text).replace(c, f"\\{c}")
+    return text
 
 def rodar_varredura():
     fuso_brasil = timezone(timedelta(hours=-3))
@@ -137,8 +150,9 @@ def rodar_varredura():
             away_id = match['teams']['away']['id']
             home_name = match['teams']['home']['name']
             away_name = match['teams']['away']['name']
+            league_name = match['league']['name']
             
-            # --- IDENTIFICA SE 1 OU OS 2 TIMES ESTÃO NA LISTA ---
+            # Identifica se 1 ou os 2 times estão na planilha
             alvos_na_partida = []
             if home_id in ids_monitorados:
                 alvos_na_partida.append({"id": home_id, "eh_mandante": True, "nome": home_name})
@@ -148,8 +162,22 @@ def rodar_varredura():
             if not alvos_na_partida:
                 continue
 
+            # --- AVISO DE JOGO EM MONITORAMENTO (CANAL SECUNDÁRIO) ---
+            if fixture_id not in jogos_notificados_inicio:
+                times_alvo_str = " & ".join([a["nome"] for a in alvos_na_partida])
+                msg_monitoramento = (
+                    "👀 *JOGO EM MONITORAMENTO* 👀\n\n"
+                    f"🏆 {escape_md(league_name)}\n"
+                    f"⚔️ *{escape_md(home_name)} vs {escape_md(away_name)}*\n\n"
+                    f"📌 *Time\\(s\\) da lista:* {escape_md(times_alvo_str)}\n"
+                    f"⏱️ O robô está analisando as estatísticas em tempo real\\."
+                )
+                enviar_telegram(msg_monitoramento, target_chat_id=TELEGRAM_CHAT_ID_MONITORAMENTO)
+                jogos_notificados_inicio.add(fixture_id)
+
+            # --- CHECAGEM DE CRITÉRIOS DE ENTRADA ---
             if ja_foi_enviado(fixture_id):
-                print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta enviado.")
+                print(f"⏩ [IGNORADO] Jogo {home_name} vs {away_name} já teve alerta de entrada enviado.")
                 continue
 
             elapsed = match['fixture']['status']['elapsed']
@@ -225,15 +253,8 @@ def rodar_varredura():
                 print(f"🔎 Avaliando {nome_alvo} ({tipo_alvo_str}) (Min {elapsed}'): Posse={possession}% | Chutes={shots_alvo} vs {shots_adv} | Escanteios={corners_alvo}")
 
                 if possession >= 55 and shots_alvo >= (shots_adv * 1.8) and shots_alvo >= 4:
-                    league_name = match['league']['name']
                     match_name = f"{home_name} vs {away_name}"
-                    
-                    def escape_md(text):
-                        for c in r"_*[]()~`>#+-=|{}.!":
-                            text = str(text).replace(c, f"\\{c}")
-                        return text
 
-                    # --- LAYOUT NOVO DO ALERTA ---
                     mensagem_alerta = (
                         "🏴‍☠️ *LIBERTEM O KRAKEN\\!* 🏴‍☠️\n\n"
                         f"🏆 {escape_md(league_name)}\n"
@@ -244,6 +265,7 @@ def rodar_varredura():
                         f"▫️ Chutes: {shots_alvo} vs {shots_adv}"
                     )
                     
+                    # Envia o alerta principal para o TELEGRAM_CHAT_ID padrão
                     enviar_telegram(mensagem_alerta)
                     registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
                     break
