@@ -138,7 +138,7 @@ def rodar_varredura():
             home_name = match['teams']['home']['name']
             away_name = match['teams']['away']['name']
             
-            # --- NOVA LÓGICA: IDENTIFICA SE 1 OU OS 2 TIMES ESTÃO NA LISTA ---
+            # --- IDENTIFICA SE 1 OU OS 2 TIMES ESTÃO NA LISTA ---
             alvos_na_partida = []
             if home_id in ids_monitorados:
                 alvos_na_partida.append({"id": home_id, "eh_mandante": True, "nome": home_name})
@@ -157,11 +157,9 @@ def rodar_varredura():
                 print(f"⏱️ [IGNORADO] {home_name} vs {away_name} fora da janela de minutos ({elapsed}').")
                 continue
 
-            # Variáveis para garantir que a API seja chamada SÓ UMA VEZ por jogo, mesmo se tiver 2 alvos
             eventos_api = None
             stats_api = None
 
-            # Testa cada alvo que estiver na planilha dentro deste jogo
             for alvo in alvos_na_partida:
                 alvo_id = alvo["id"]
                 eh_mandante = alvo["eh_mandante"]
@@ -178,7 +176,6 @@ def rodar_varredura():
                     print(f"⚽ [IGNORADO] {nome_alvo} ({tipo_alvo_str}) está vencendo o jogo.")
                     continue
                 
-                # Puxa eventos (Cartão Vermelho) apenas se ainda não puxou
                 if eventos_api is None:
                     ev_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}", headers=headers, timeout=10)
                     eventos_api = ev_resp.json().get("response", [])
@@ -191,7 +188,6 @@ def rodar_varredura():
                     print(f"🟥 [IGNORADO] {nome_alvo} ({tipo_alvo_str}) tem jogador expulso.")
                     continue
 
-                # Puxa Estatísticas apenas se ainda não puxou
                 if stats_api is None:
                     stats_resp = requests.get(f"https://v3.football.api-sports.io/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=10)
                     stats_api = stats_resp.json().get('response', [])
@@ -199,7 +195,7 @@ def rodar_varredura():
                 if not stats_api or len(stats_api) < 2:
                     print(f"🔍 [DEBUG API CRU] Jogo {home_name} vs {away_name} (ID: {fixture_id})")
                     print(f"📊 [IGNORADO] Estatísticas ainda indisponíveis na API.\n")
-                    break # Sem stats, interrompe a checagem dos dois times
+                    break
 
                 h_stats = next((s['statistics'] for s in stats_api if s['team']['id'] == home_id), [])
                 a_stats = next((s['statistics'] for s in stats_api if s['team']['id'] != home_id), [])
@@ -237,21 +233,20 @@ def rodar_varredura():
                             text = str(text).replace(c, f"\\{c}")
                         return text
 
+                    # --- LAYOUT NOVO DO ALERTA ---
                     mensagem_alerta = (
-                        "🚨 *Alerta de Padrão Detectado\\!*\n\n"
-                        f"🏆 *Liga:* {escape_md(league_name)}\n"
-                        f"⚔️ *Jogo:* {escape_md(match_name)}\n"
-                        f"⏱️ *Minuto:* {elapsed}'\n\n"
-                        f"🔥 *TIME DOMINANTE:* _{escape_md(nome_alvo)} \\({tipo_alvo_str}\\)_\n\n"
-                        f"📊 *Métricas do Alvo:*\n"
+                        "🏴‍☠️ *LIBERTEM O KRAKEN\\!* 🏴‍☠️\n\n"
+                        f"🏆 {escape_md(league_name)}\n"
+                        f"⚔️ *{escape_md(home_name)} {home_goals} x {away_goals} {escape_md(away_name)}* \\- Min {elapsed}'\n\n"
+                        f"🔥 🎯 *{escape_md(nome_alvo.upper())}* 🎯\n\n"
                         f"▫️ Posse de Bola: {possession}%\n"
-                        f"▫️ Escanteios \\(Alvo vs Adv\\): {corners_alvo} vs {corners_adv}\n"
-                        f"▫️ Chutes \\(Alvo vs Adv\\): {shots_alvo} vs {shots_adv}"
+                        f"▫️ Escanteios: {corners_alvo} vs {corners_adv}\n"
+                        f"▫️ Chutes: {shots_alvo} vs {shots_adv}"
                     )
                     
                     enviar_telegram(mensagem_alerta)
                     registrar_envio(fixture_id, league_name, match_name, elapsed, corners_alvo, h_poss)
-                    break # Se já enviou o alerta por causa de um time, para o loop (não manda duplo)
+                    break
                 else:
                     print(f"❌ [DESCARTADO] {nome_alvo} não bateu as métricas exigidas.")
                     
